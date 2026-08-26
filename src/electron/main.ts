@@ -140,6 +140,9 @@ if (!hasSingleInstanceLock) {
         webDir: app.isPackaged
           ? path.join(process.resourcesPath, 'web')
           : path.join(app.getAppPath(), 'dist', 'web'),
+        pricingCatalogPath: app.isPackaged
+          ? path.join(process.resourcesPath, 'pricing', 'model-pricing.json')
+          : path.join(app.getAppPath(), 'pricing', 'model-pricing.json'),
         port,
       }, {
         openGeneratedImagesDirectory: async () => {

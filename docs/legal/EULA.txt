@@ -1,7 +1,7 @@
 StarBox 开源软件声明
 StarBox Open Source Software Notice
 
-生效日期 / Effective Date: 2026-08-21
+生效日期 / Effective Date: 2026-08-26
 
 版权所有 © 2026 solnsu。
 Copyright © 2026 solnsu.
@@ -36,9 +36,9 @@ StarBox may process or store authentication information, access tokens, account 
 
 5. 第三方服务 / Third-Party Services
 
-StarBox 可与 OpenAI、ChatGPT、Codex 及其他第三方服务交互。用户使用这些服务时仍须遵守相应服务提供方的条款、政策、技术限制和账号规则。StarBox 是独立开发的第三方项目，与 OpenAI 不存在隶属、赞助、授权或官方合作关系。
+StarBox 可与 OpenAI、ChatGPT、Codex、DeepSeek 及其他第三方服务交互。用户使用这些服务时仍须遵守相应服务提供方的条款、政策、技术限制和账号规则。StarBox 是独立开发的第三方项目，与 OpenAI 或 DeepSeek 不存在隶属、赞助、授权或官方合作关系。
 
-StarBox may interact with OpenAI, ChatGPT, Codex, and other third-party services. Use of those services remains subject to the applicable provider's terms, policies, technical restrictions, and account rules. StarBox is an independently developed third-party project and is not affiliated with, sponsored by, authorized by, or officially partnered with OpenAI.
+StarBox may interact with OpenAI, ChatGPT, Codex, DeepSeek, and other third-party services. Use of those services remains subject to the applicable provider's terms, policies, technical restrictions, and account rules. StarBox is an independently developed third-party project and is not affiliated with, sponsored by, authorized by, or officially partnered with OpenAI or DeepSeek.
 
 6. 隐私与本地数据 / Privacy and Local Data
 
@@ -54,5 +54,5 @@ Unless required by applicable law or separately agreed in writing, StarBox is pr
 
 8. 项目信息 / Project Information
 
-项目主页 / Project website: https://github.com/solnsu/StarBox
+项目主页 / Project website: https://github.com/solnsu/StarBox_AITools
 电子邮箱 / Email: soln0708@163.com

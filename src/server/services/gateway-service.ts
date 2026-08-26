@@ -11,6 +11,12 @@ import {
 } from '../repositories/gateway-repository.js';
 import { AuthService, ServiceError, type RuntimeCredential } from './auth-service.js';
 import type { ModelPricingService } from './model-pricing-service.js';
+import {
+  CODEX_PROVIDER_DISPLAY_NAME,
+  LOCAL_GATEWAY_PROVIDER,
+  validateCodexProvider,
+} from './codex-provider.js';
+import { CodexCredentialPool } from './codex-credential-pool.js';
 
 const SETTINGS_AAD_SUFFIX = 'local-api-key';
 const UPSTREAM_URL = 'https://chatgpt.com/backend-api/codex/responses';
@@ -18,7 +24,7 @@ const IMAGE_UPSTREAM_URL = 'https://chatgpt.com/backend-api/codex/images/generat
 const IMAGE_EDIT_UPSTREAM_URL = 'https://chatgpt.com/backend-api/codex/images/edits';
 const MAX_CAPTURE_BYTES = 4 * 1024 * 1024;
 const IMAGE_MODELS = new Set(['gpt-image-1.5', 'gpt-image-2']);
-const IMAGE_SIZES = new Set(['auto', '1024x1024', '1536x1024', '1024x1536', '2048x2048', '2048x1152', '3840x2160', '2160x3840']);
+const IMAGE_SIZES = new Set(['auto', '1024x1024', '1536x1024', '1024x1536']);
 const IMAGE_QUALITIES = new Set(['auto', 'low', 'medium', 'high']);
 
 type SettingsInput = { baseUrl: string; enabled: boolean };
@@ -29,6 +35,7 @@ export type ClientConfiguration = {
   kind: 'codex' | 'image';
   apiKey: string;
   endpoint: string;
+  provider: string | null;
   authJson: string;
   secondaryFileName: 'config.toml' | 'request.json';
   secondaryContent: string;
@@ -71,6 +78,8 @@ const numberField = (value: unknown) => {
 };
 
 export class GatewayService {
+  private readonly credentialPool: CodexCredentialPool;
+
   constructor(
     private readonly repository: GatewayRepository,
     private readonly vault: LocalVault,
@@ -78,7 +87,9 @@ export class GatewayService {
     private readonly pricing: ModelPricingService,
     private readonly tenantId: string,
     private readonly defaultBaseUrl = 'http://127.0.0.1:4312/v1',
-  ) {}
+  ) {
+    this.credentialPool = new CodexCredentialPool(this.authService);
+  }
 
   getSettings(): GatewayView | null {
     const stored = this.repository.getSettings(this.tenantId);
@@ -114,27 +125,28 @@ export class GatewayService {
     return `${JSON.stringify({ OPENAI_API_KEY: this.decryptKey(settings) }, null, 2)}\n`;
   }
 
-  buildConfigToml(model: string): string {
+  buildConfigToml(model: string, providerInput = LOCAL_GATEWAY_PROVIDER): string {
     this.validateModel(model);
+    const provider = validateCodexProvider(providerInput);
     const settings = this.requireSettings();
     return [
       'disable_response_storage = true',
       `model = ${JSON.stringify(model)}`,
-      'model_provider = "myChatgpt"',
+      `model_provider = ${JSON.stringify(provider)}`,
       'model_reasoning_effort = "high"',
       'model_verbosity = "high"',
       'web_search = "live"',
       '',
-      '[model_providers.myChatgpt]',
+      `[model_providers.${provider}]`,
       `base_url = ${JSON.stringify(settings.baseUrl)}`,
-      'name = "myChatgpt"',
+      `name = ${JSON.stringify(CODEX_PROVIDER_DISPLAY_NAME)}`,
       'requires_openai_auth = true',
       'wire_api = "responses"',
       '',
     ].join('\n');
   }
 
-  getClientConfiguration(model: string): ClientConfiguration {
+  getClientConfiguration(model: string, providerInput = LOCAL_GATEWAY_PROVIDER): ClientConfiguration {
     this.validateModel(model);
     let settings = this.repository.getSettings(this.tenantId);
     if (!settings) {
@@ -150,6 +162,7 @@ export class GatewayService {
         kind: 'image',
         apiKey,
         endpoint: settings.baseUrl,
+        provider: null,
         authJson,
         secondaryFileName: 'request.json',
         secondaryContent: `${JSON.stringify({
@@ -166,9 +179,10 @@ export class GatewayService {
       kind: 'codex',
       apiKey,
       endpoint: settings.baseUrl,
+      provider: validateCodexProvider(providerInput),
       authJson,
       secondaryFileName: 'config.toml',
-      secondaryContent: this.buildConfigToml(model),
+      secondaryContent: this.buildConfigToml(model, providerInput),
     };
   }
 
@@ -204,33 +218,22 @@ export class GatewayService {
     if (!model) throw new ServiceError('MODEL_REQUIRED', 400);
     await this.requireModelPrice(model);
     const upstreamBody = this.normalizeRequest(input);
-    const credentials = await this.authService.getRuntimeCredentials();
-    let credential = credentials[0]!;
     const startedAt = Date.now();
-    let response: Response;
+    let routed: { response: Response; credential: RuntimeCredential };
     try {
-      response = await this.fetchUpstream(upstreamBody, credential);
-      if (response.status === 401 || response.status === 403 || response.status === 429) {
-        await response.body?.cancel();
-        const refreshed = await this.authService.getRuntimeCredentials(true);
-        const candidates = refreshed.filter((candidate) => candidate.fileId !== credential.fileId);
-        let nextResponse: Response | null = null;
-        for (const candidate of candidates) {
-          const attempt = await this.fetchUpstream(upstreamBody, candidate);
-          if (attempt.status !== 401 && attempt.status !== 403 && attempt.status !== 429) { credential = candidate; nextResponse = attempt; break; }
-          await attempt.body?.cancel();
-        }
-        if (!nextResponse) throw new ServiceError('AUTH_REJECTED', 401);
-        response = nextResponse;
-      }
+      routed = await this.credentialPool.execute(
+        (credential) => this.fetchUpstream(upstreamBody, credential),
+      );
     } catch (error) {
+      const credential = (await this.authService.getRuntimeCredentials())[0]!;
       this.recordFailedAttempt({ startedAt, model, credential, suppliedKey }, 'Codex upstream unavailable');
       if (error instanceof ServiceError) throw error;
       throw new ServiceError('UPSTREAM_UNAVAILABLE', 502);
     }
     return {
-      response, requestId: response.headers.get('x-request-id') ?? randomUUID(),
-      startedAt, model, credential,
+      response: routed.response,
+      requestId: routed.response.headers.get('x-request-id') ?? randomUUID(),
+      startedAt, model, credential: routed.credential,
       apiKeyHash: createHash('sha256').update(suppliedKey).digest('hex').slice(0, 16),
     };
   }
@@ -244,11 +247,11 @@ export class GatewayService {
     return this.executeImageGeneration(body, suppliedKey);
   }
 
-  proxyManagedImageGeneration(body: unknown, fileId: string): Promise<ProxyContext> {
-    return this.executeImageGeneration(body, 'managed-creation', fileId);
+  proxyManagedImageGeneration(body: unknown): Promise<ProxyContext> {
+    return this.executeImageGeneration(body, 'managed-creation');
   }
 
-  private async executeImageGeneration(body: unknown, suppliedKey: string, fileId?: string): Promise<ProxyContext> {
+  private async executeImageGeneration(body: unknown, suppliedKey: string): Promise<ProxyContext> {
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       throw new ServiceError('INVALID_MODEL_REQUEST', 400);
     }
@@ -258,7 +261,7 @@ export class GatewayService {
     if (!stringField(input.prompt)) throw new ServiceError('IMAGE_PROMPT_REQUIRED', 400);
     const size = stringField(input.size) ?? 'auto';
     const quality = stringField(input.quality) ?? 'auto';
-    if (!IMAGE_SIZES.has(size) || (model !== 'gpt-image-2' && (size.startsWith('2') || size.startsWith('3')))) {
+    if (!IMAGE_SIZES.has(size)) {
       throw new ServiceError('IMAGE_SIZE_INVALID', 400);
     }
     if (!IMAGE_QUALITIES.has(quality)) throw new ServiceError('IMAGE_QUALITY_INVALID', 400);
@@ -269,26 +272,14 @@ export class GatewayService {
     const isEdit = Array.isArray(input.input_images) && input.input_images.length > 0;
     const imagePath = isEdit ? '/v1/images/edits' : '/v1/images/generations';
     const upstreamBody = isEdit ? this.buildImageEditBody(input, model, size, quality) : JSON.stringify({ ...input, model, stream: false });
-    let credential = fileId
-      ? await this.authService.getRuntimeCredential(fileId)
-      : (await this.authService.getRuntimeCredentials())[0]!;
     const startedAt = Date.now();
-    let response: Response;
+    let routed: { response: Response; credential: RuntimeCredential };
     try {
-      response = await this.fetchImageUpstream(upstreamBody, credential, isEdit);
-      if (response.status === 401 || response.status === 403 || response.status === 429) {
-        const candidates = fileId
-          ? [await this.authService.getRuntimeCredential(fileId, true)]
-          : await this.authService.getRuntimeCredentials(true);
-        for (const candidate of candidates) {
-          const attempt = await this.fetchImageUpstream(upstreamBody, candidate, isEdit);
-          await response.body?.cancel();
-          credential = candidate;
-          response = attempt;
-          if (attempt.status !== 401 && attempt.status !== 403 && attempt.status !== 429) break;
-        }
-      }
+      routed = await this.credentialPool.execute(
+        (credential) => this.fetchImageUpstream(upstreamBody, credential, isEdit),
+      );
     } catch (error) {
+      const credential = (await this.authService.getRuntimeCredentials())[0]!;
       const failure = this.imageRequestFailure(error);
       this.recordFailedImageAttempt({
         startedAt, model, credential, suppliedKey, imagePath, ...failure,
@@ -297,11 +288,11 @@ export class GatewayService {
       throw new ServiceError('UPSTREAM_UNAVAILABLE', 502);
     }
     return {
-      response,
-      requestId: response.headers.get('x-request-id') ?? randomUUID(),
+      response: routed.response,
+      requestId: routed.response.headers.get('x-request-id') ?? randomUUID(),
       startedAt,
       model,
-      credential,
+      credential: routed.credential,
       apiKeyHash: createHash('sha256').update(suppliedKey).digest('hex').slice(0, 16),
       imagePath,
     };
@@ -321,7 +312,7 @@ export class GatewayService {
     const failed = statusCode < 200 || statusCode >= 300 || streamFailure !== null;
     const log: RequestLogInput = {
       id: randomUUID(), eventHash: randomUUID(), requestId: context.requestId,
-      timestampMs: context.startedAt, provider: 'codex', model: context.model,
+      timestampMs: context.startedAt, provider: 'codex', billingCurrency: 'USD', model: context.model,
       endpoint: 'POST /v1/responses', method: 'POST', path: '/v1/responses',
       authIndex: context.credential.fileId,
       accountIdSnapshot: context.credential.accountId,
@@ -349,7 +340,7 @@ export class GatewayService {
     const failed = statusCode < 200 || statusCode >= 300 || Boolean(processingFailure);
     this.repository.insertLog(this.tenantId, {
       id: randomUUID(), eventHash: randomUUID(), requestId: context.requestId,
-      timestampMs: context.startedAt, provider: 'codex', model: context.model,
+      timestampMs: context.startedAt, provider: 'codex', billingCurrency: 'USD', model: context.model,
       endpoint: `POST ${context.imagePath ?? '/v1/images/generations'}`, method: 'POST', path: context.imagePath ?? '/v1/images/generations',
       authIndex: context.credential.fileId,
       accountIdSnapshot: context.credential.accountId,
@@ -482,7 +473,7 @@ export class GatewayService {
   }, summary: string): void {
     this.repository.insertLog(this.tenantId, {
       id: randomUUID(), eventHash: randomUUID(), requestId: randomUUID(),
-      timestampMs: input.startedAt, provider: 'codex', model: input.model,
+      timestampMs: input.startedAt, provider: 'codex', billingCurrency: 'USD', model: input.model,
       endpoint: 'POST /v1/responses', method: 'POST', path: '/v1/responses',
       authIndex: input.credential.fileId,
       accountIdSnapshot: input.credential.accountId,
@@ -503,7 +494,7 @@ export class GatewayService {
   }): void {
     this.repository.insertLog(this.tenantId, {
       id: randomUUID(), eventHash: randomUUID(), requestId: randomUUID(),
-      timestampMs: input.startedAt, provider: 'codex', model: input.model,
+      timestampMs: input.startedAt, provider: 'codex', billingCurrency: 'USD', model: input.model,
       endpoint: `POST ${input.imagePath}`, method: 'POST', path: input.imagePath,
       authIndex: input.credential.fileId,
       accountIdSnapshot: input.credential.accountId,

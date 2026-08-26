@@ -22,6 +22,7 @@ const requestLog = (
   requestId: id,
   timestampMs: Date.now(),
   provider: 'codex',
+  billingCurrency: 'USD',
   model: 'gpt-5.6-sol',
   endpoint: 'POST /v1/responses',
   method: 'POST',
@@ -44,6 +45,20 @@ const requestLog = (
   failStatusCode: null,
   failSummary: null,
   responseContent: null,
+});
+
+const deepSeekRequestLog = (
+  id: string,
+  timestampMs: number,
+  billingCurrency: 'CNY' | 'USD' = 'CNY',
+): RequestLogInput => ({
+  ...requestLog(id, 'deepseek-key-1', 'deepseek-key-1', 1_000_000),
+  timestampMs,
+  provider: 'deepseek',
+  billingCurrency,
+  model: 'deepseek-v4-flash',
+  accountSnapshot: 'DeepSeek primary',
+  authFileSnapshot: 'DeepSeek primary',
 });
 
 describe('GatewayService', () => {
@@ -140,6 +155,53 @@ describe('GatewayService', () => {
     expect(dashboard.trend.reduce((total, point) => total + point.requestCount, 0)).toBe(2);
   });
 
+  it('excludes image usage only from cache hit rate totals', () => {
+    const repository = new GatewayRepository(database, pricing);
+    repository.insertLog('test', requestLog('cold-text', 'account-1', 'credential-1', 100));
+    repository.insertLog('test', {
+      ...requestLog('warm-text', 'account-1', 'credential-1', 120),
+      cachedTokens: 100,
+    });
+    repository.insertLog('test', {
+      ...requestLog('image', 'account-1', 'credential-1', 40),
+      model: 'gpt-image-2',
+      endpoint: 'POST /v1/images/generations',
+      path: '/v1/images/generations',
+      cachedTokens: 40,
+    });
+
+    expect(gateway.dashboard({}).summary).toMatchObject({
+      inputTokens: 260,
+      cacheEligibleInputTokens: 220,
+      cachedTokens: 100,
+    });
+  });
+
+  it('keeps currencies separate and prices DeepSeek logs at their request time', () => {
+    const repository = new GatewayRepository(database, pricing);
+    repository.insertLog('test', requestLog('codex-request', 'account-1', 'credential-1', 1_000_000));
+    repository.insertLog('test', deepSeekRequestLog(
+      'deepseek-peak', Date.parse('2026-08-24T09:30:00+08:00'),
+    ));
+    repository.insertLog('test', deepSeekRequestLog(
+      'deepseek-off-peak', Date.parse('2026-08-24T12:00:00+08:00'),
+    ));
+    repository.insertLog('test', deepSeekRequestLog(
+      'deepseek-usd', Date.parse('2026-08-24T12:00:00+08:00'), 'USD',
+    ));
+
+    const dashboard = gateway.dashboard({});
+    const peak = dashboard.logs.find((log) => log.id === 'deepseek-peak');
+    const offPeak = dashboard.logs.find((log) => log.id === 'deepseek-off-peak');
+
+    expect(peak?.estimatedCost).toEqual({ amount: 3, currency: 'CNY' });
+    expect(offPeak?.estimatedCost).toEqual({ amount: 1.5, currency: 'CNY' });
+    expect(dashboard.summary.estimatedCosts).toEqual(expect.arrayContaining([
+      { amount: 5.22, currency: 'USD' },
+      { amount: 4.5, currency: 'CNY' },
+    ]));
+  });
+
   it('stores the upstream error detail for failed requests', async () => {
     auth.import('account.json', {
       type: 'codex', account_id: 'account-1', email: 'user@example.com', access_token: 'access-value',
@@ -177,7 +239,7 @@ describe('GatewayService', () => {
       '',
       '[model_providers.myChatgpt]',
       'base_url = "http://127.0.0.1:4312/v1"',
-      'name = "myChatgpt"',
+      'name = "StarBox"',
       'requires_openai_auth = true',
       'wire_api = "responses"',
       '',
@@ -242,7 +304,7 @@ describe('GatewayService', () => {
     const context = await gateway.proxyManagedImageGeneration({
       model: 'gpt-image-2', prompt: 'Make it blue', size: '1024x1024', quality: 'medium',
       input_images: ['data:image/png;base64,iVBORw0KGgo='],
-    }, auth.list()[0]!.id);
+    });
     const payload = await context.response.text();
     gateway.recordImage(context, payload, context.response.status);
     expect(gateway.dashboard({}).logs[0]).toMatchObject({
@@ -318,8 +380,99 @@ describe('GatewayService', () => {
       });
     }));
     const context = await gateway.proxyResponses({ model: 'gpt-5.6-sol', input: 'hello' }, `Bearer ${created.apiKey}`);
-    expect(calls).toBe(2);
+    expect(calls).toBe(3);
     expect(context.credential.accountId).toBe('account-second');
     expect(await context.response.text()).toContain('rotated-response');
+  });
+
+  it('round-robins healthy ChatGPT accounts', async () => {
+    auth.import('first.json', {
+      type: 'codex', account_id: 'account-first', email: 'first@example.com', access_token: 'first-token',
+    });
+    auth.import('second.json', {
+      type: 'codex', account_id: 'account-second', email: 'second@example.com', access_token: 'second-token',
+    });
+    const created = gateway.saveSettings({ baseUrl: 'http://127.0.0.1:4312/v1', enabled: true });
+    const accounts: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      accounts.push((init?.headers as Record<string, string>)['Chatgpt-Account-Id']!);
+      return new Response('data: {"type":"response.completed","response":{"usage":{"total_tokens":1}}}\n\n', {
+        status: 200, headers: { 'content-type': 'text/event-stream' },
+      });
+    }));
+
+    const first = await gateway.proxyResponses(
+      { model: 'gpt-5.6-sol', input: 'first' }, `Bearer ${created.apiKey}`,
+    );
+    const second = await gateway.proxyResponses(
+      { model: 'gpt-5.6-sol', input: 'second' }, `Bearer ${created.apiKey}`,
+    );
+
+    expect([first.credential.accountId, second.credential.accountId]).toEqual([
+      'account-first', 'account-second',
+    ]);
+    expect(accounts).toEqual(['account-first', 'account-second']);
+  });
+
+  it('round-robins managed creation requests independently of the displayed account', async () => {
+    auth.import('first.json', {
+      type: 'codex', account_id: 'account-first', email: 'first@example.com', access_token: 'first-token',
+    });
+    auth.import('second.json', {
+      type: 'codex', account_id: 'account-second', email: 'second@example.com', access_token: 'second-token',
+    });
+    const accounts: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      accounts.push((init?.headers as Record<string, string>)['Chatgpt-Account-Id']!);
+      return new Response(JSON.stringify({
+        data: [{ b64_json: 'AA==' }], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }));
+
+    const first = await gateway.proxyManagedImageGeneration({
+      model: 'gpt-image-2', prompt: 'first image', size: '1024x1024',
+    });
+    const second = await gateway.proxyManagedImageGeneration({
+      model: 'gpt-image-2', prompt: 'second image', size: '1024x1024',
+    });
+
+    expect([first.credential.accountId, second.credential.accountId]).toEqual([
+      'account-first', 'account-second',
+    ]);
+    expect(accounts).toEqual(['account-first', 'account-second']);
+  });
+
+  it('fails over image generation after quota exhaustion and skips the cooled account', async () => {
+    auth.import('first.json', {
+      type: 'codex', account_id: 'account-first', email: 'first@example.com', access_token: 'first-token',
+    });
+    auth.import('second.json', {
+      type: 'codex', account_id: 'account-second', email: 'second@example.com', access_token: 'second-token',
+    });
+    const config = gateway.getClientConfiguration('gpt-image-2');
+    const accounts: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const accountId = (init?.headers as Record<string, string>)['Chatgpt-Account-Id']!;
+      accounts.push(accountId);
+      if (accountId === 'account-first') {
+        return new Response(JSON.stringify({ error: { message: 'usage limit reached' } }), { status: 429 });
+      }
+      return new Response(JSON.stringify({
+        data: [{ b64_json: 'AA==' }], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }));
+
+    const first = await gateway.proxyImageGeneration({
+      model: 'gpt-image-2', prompt: 'first image', size: '1024x1024',
+    }, `Bearer ${config.apiKey}`);
+    const second = await gateway.proxyImageGeneration({
+      model: 'gpt-image-2', prompt: 'second image', size: '1024x1024',
+    }, `Bearer ${config.apiKey}`);
+
+    expect([first.credential.accountId, second.credential.accountId]).toEqual([
+      'account-second', 'account-second',
+    ]);
+    expect(accounts).toEqual(['account-first', 'account-second', 'account-second']);
+    expect(auth.list().map((file) => file.accountId)).toEqual(['account-second', 'account-first']);
   });
 });

@@ -1,6 +1,6 @@
 import type {
   AuthFile, AvailableModel, GatewaySettings, GatewaySettingsResult,
-  Inspection, RequestLog, RequestLogSummary, RequestTrendPoint,
+  BillingCurrency, DeepSeekApiKey, DeepSeekBalance, Inspection, RequestLog, RequestLogSummary, RequestTrendPoint,
 } from './types';
 
 export type RateLimitResetStatusData = {
@@ -90,6 +90,48 @@ export const authApi = {
   },
 };
 
+export const deepSeekApi = {
+  listKeys: () => request<{ keys: DeepSeekApiKey[] }>('/api/deepseek/keys'),
+  createKey: (name: string, apiKey: string, billingCurrency: BillingCurrency) => request<{ key: DeepSeekApiKey }>('/api/deepseek/keys', {
+    method: 'POST', body: JSON.stringify({ name, apiKey, billingCurrency }),
+  }),
+  deleteKey: (id: string) => request<void>(`/api/deepseek/keys/${id}`, { method: 'DELETE' }),
+  reorderKeys: (ids: string[]) => request<{ keys: DeepSeekApiKey[] }>('/api/deepseek/keys/order', {
+    method: 'PATCH', body: JSON.stringify({ ids }),
+  }),
+  listModels: (keyId: string) => request<{ keyId: string; models: AvailableModel[] }>(
+    `/api/deepseek/models?keyId=${encodeURIComponent(keyId)}`,
+  ),
+  balance: (keyId: string) => request<DeepSeekBalance>(
+    `/api/deepseek/balance?keyId=${encodeURIComponent(keyId)}`,
+  ),
+  harnessConfig: (keyId: string, model: string) => request<DeepSeekHarnessConfiguration>(
+    '/api/deepseek/harness-config', {
+      method: 'POST', body: JSON.stringify({ keyId, model }),
+    },
+  ),
+  applyToHarness: (keyId: string, model: string) => request<{
+    model: string;
+    harnessHome: string;
+    files: ['.credentials.yaml', 'settings.yaml'];
+  }>('/api/deepseek/harness-apply', {
+    method: 'POST', body: JSON.stringify({ keyId, model }),
+  }),
+  codexConfig: (keyId: string, model: string, provider?: string) => request<DeepSeekCodexConfiguration>(
+    '/api/deepseek/codex-config', {
+      method: 'POST', body: JSON.stringify({ keyId, model, ...(provider ? { provider } : {}) }),
+    },
+  ),
+  applyToCodex: (keyId: string, model: string, provider: string) => request<{
+    model: string;
+    provider: string;
+    codexHome: string;
+    files: ['config.toml', 'models.json'];
+  }>('/api/deepseek/codex-apply', {
+    method: 'POST', body: JSON.stringify({ keyId, model, provider }),
+  }),
+};
+
 export const monitoringApi = {
   get: () => request<{ files: AuthFile[] }>('/api/monitoring'),
   inspectAll: () =>
@@ -140,7 +182,6 @@ export const creationApi = {
       method: 'POST', body: JSON.stringify(message),
     }),
   generate: (input: {
-    authFileId: string;
     sessionId: string;
     session: Pick<CreationSessionData, 'id' | 'title' | 'createdAt'>;
     userMessage?: { id: string; role: 'user'; text: string; createdAt: number; attachments?: CreationInputAttachmentData[] };
@@ -191,9 +232,34 @@ export type ClientConfiguration = {
   kind: 'codex' | 'image';
   apiKey: string;
   endpoint: string;
+  provider: string | null;
   authJson: string;
   secondaryFileName: 'config.toml' | 'request.json';
   secondaryContent: string;
+};
+
+export type DeepSeekHarnessConfiguration = {
+  kind: 'deepseek-harness';
+  model: string;
+  keyId: string;
+  maskedKey: string;
+  endpoint: string;
+  harnessHome: string;
+  settingsFilePath: string;
+  credentialsFilePath: string;
+  settingsYaml: string;
+};
+
+export type DeepSeekCodexConfiguration = {
+  kind: 'deepseek-codex';
+  model: string;
+  maskedKey: string;
+  endpoint: string;
+  provider: string;
+  codexHome: string;
+  configFilePath: string;
+  modelsFilePath: string;
+  configToml: string;
 };
 
 const modelListCache = new Map<string, {
@@ -212,15 +278,16 @@ export const modelsApi = {
     modelListCache.set(key, { expiresAt: Date.now() + 5 * 60 * 1000, value });
     return value;
   },
-  clientConfig: (model: string) => request<ClientConfiguration>('/api/client-config', {
-    method: 'POST', body: JSON.stringify({ model }),
+  clientConfig: (model: string, provider?: string) => request<ClientConfiguration>('/api/client-config', {
+    method: 'POST', body: JSON.stringify({ model, ...(provider ? { provider } : {}) }),
   }),
-  applyToCodex: (model: string) => request<{
+  applyToCodex: (model: string, provider: string) => request<{
     model: string;
+    provider: string;
     codexHome: string;
     files: ['auth.json', 'config.toml'];
   }>('/api/codex-client/apply', {
-    method: 'POST', body: JSON.stringify({ model }),
+    method: 'POST', body: JSON.stringify({ model, provider }),
   }),
   downloadAuth: () => download('/api/client-files/auth.json', 'auth.json'),
   downloadConfig: (model: string) => download(

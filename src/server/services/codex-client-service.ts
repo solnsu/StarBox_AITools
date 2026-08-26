@@ -4,9 +4,11 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { ClientConfiguration } from './gateway-service.js';
 import { ServiceError } from './auth-service.js';
+import { LOCAL_GATEWAY_PROVIDER, readCodexProvider } from './codex-provider.js';
 
 export type CodexApplyResult = {
   model: string;
+  provider: string;
   codexHome: string;
   files: ['auth.json', 'config.toml'];
 };
@@ -20,19 +22,31 @@ const defaultCodexHome = () => {
 export class CodexClientService {
   constructor(
     private readonly gatewayService: {
-      getClientConfiguration(model: string): ClientConfiguration;
+      getClientConfiguration(model: string, provider?: string): ClientConfiguration;
     },
     private readonly codexHome = defaultCodexHome(),
   ) {}
 
-  async apply(model: string): Promise<CodexApplyResult> {
-    const configuration = this.gatewayService.getClientConfiguration(model);
-    if (configuration.kind !== 'codex') throw new ServiceError('CODEX_MODEL_REQUIRED', 400);
+  async configuration(model: string, providerInput?: string): Promise<ClientConfiguration> {
+    const provider = providerInput ?? await readCodexProvider(this.codexHome, LOCAL_GATEWAY_PROVIDER);
+    return this.gatewayService.getClientConfiguration(model, provider);
+  }
+
+  async apply(model: string, provider: string): Promise<CodexApplyResult> {
+    const configuration = this.gatewayService.getClientConfiguration(model, provider);
+    if (configuration.kind !== 'codex' || !configuration.provider) {
+      throw new ServiceError('CODEX_MODEL_REQUIRED', 400);
+    }
 
     await mkdir(this.codexHome, { recursive: true, mode: 0o700 });
     await this.replaceFile('auth.json', configuration.authJson);
     await this.replaceFile('config.toml', configuration.secondaryContent);
-    return { model: configuration.model, codexHome: this.codexHome, files: ['auth.json', 'config.toml'] };
+    return {
+      model: configuration.model,
+      provider: configuration.provider,
+      codexHome: this.codexHome,
+      files: ['auth.json', 'config.toml'],
+    };
   }
 
   private async replaceFile(fileName: string, content: string): Promise<void> {

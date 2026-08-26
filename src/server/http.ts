@@ -9,6 +9,12 @@ import { CodexClientService } from './services/codex-client-service.js';
 import { CodexRateLimitService } from './services/codex-rate-limit-service.js';
 import type { CreationService } from './services/creation-service.js';
 import type { DesktopIntegration } from './desktop-integration.js';
+import type { DeepSeekKeyService } from './services/deepseek-key-service.js';
+import type { DeepSeekModelService } from './services/deepseek-model-service.js';
+import type { DeepSeekBalanceService } from './services/deepseek-balance-service.js';
+import type { DeepSeekHarnessService } from './services/deepseek-harness-service.js';
+import type { DeepSeekCodexService } from './services/deepseek-codex-service.js';
+import type { DeepSeekProxyService } from './services/deepseek-proxy-service.js';
 
 const importSchema = z
   .object({
@@ -22,9 +28,16 @@ const gatewaySettingsSchema = z.object({
   baseUrl: z.string().min(1).max(500),
   enabled: z.boolean().default(true),
 }).strict();
-const clientConfigSchema = z.object({ model: z.string().min(1).max(120) }).strict();
+const codexProviderSchema = z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
+const clientConfigSchema = z.object({
+  model: z.string().min(1).max(120),
+  provider: codexProviderSchema.optional(),
+}).strict();
+const codexApplySchema = z.object({
+  model: z.string().min(1).max(120),
+  provider: codexProviderSchema,
+}).strict();
 const creationGenerateSchema = z.object({
-  authFileId: z.string().uuid(),
   sessionId: z.string().uuid(),
   session: z.object({
     id: z.string().uuid(),
@@ -40,7 +53,7 @@ const creationGenerateSchema = z.object({
   }).strict().optional(),
   model: z.string().min(1).max(120),
   prompt: z.string().min(1).max(32_000),
-  size: z.enum(['auto', '1024x1024', '1536x1024', '1024x1536', '2048x2048', '2048x1152', '3840x2160', '2160x3840']).default('auto'),
+  size: z.enum(['auto', '1024x1024', '1536x1024', '1024x1536']).default('auto'),
   quality: z.enum(['auto', 'low', 'medium', 'high']).default('auto'),
   inputImages: z.array(z.string().regex(/^data:image\/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]+$/).max(15 * 1024 * 1024)).max(4).optional(),
 }).strict().refine((input) => input.session.id === input.sessionId);
@@ -65,6 +78,22 @@ const creationMessageSchema = z.object({
 }).strict();
 const authOrderSchema = z.object({ ids: z.array(z.string().min(1)).min(1) }).strict();
 const rateLimitResetSchema = z.object({ idempotencyKey: z.string().uuid() }).strict();
+const deepSeekKeySchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  apiKey: z.string().trim().min(1).max(512),
+  billingCurrency: z.enum(['CNY', 'USD']),
+}).strict();
+const deepSeekModelsQuerySchema = z.object({ keyId: z.string().uuid() }).strict();
+const deepSeekHarnessSchema = z.object({
+  keyId: z.string().uuid(),
+  model: z.string().trim().min(1).max(120).regex(/^[A-Za-z0-9._:-]+$/),
+}).strict();
+const deepSeekCodexSchema = deepSeekHarnessSchema.extend({
+  provider: codexProviderSchema.optional(),
+}).strict();
+const deepSeekCodexApplySchema = deepSeekHarnessSchema.extend({
+  provider: codexProviderSchema,
+}).strict();
 
 const queryString = (value: unknown): string | undefined =>
   typeof value === 'string' ? value : undefined;
@@ -87,6 +116,12 @@ export const createHttpApp = (
   gatewayService: GatewayService,
   webDir: string,
   creationService: CreationService,
+  deepSeekKeyService: DeepSeekKeyService,
+  deepSeekModelService: DeepSeekModelService,
+  deepSeekBalanceService: DeepSeekBalanceService,
+  deepSeekHarnessService: DeepSeekHarnessService,
+  deepSeekCodexService: DeepSeekCodexService,
+  deepSeekProxyService: DeepSeekProxyService,
   codexClientService = new CodexClientService(gatewayService),
   desktopIntegration: DesktopIntegration = {},
   codexRateLimitService: Pick<CodexRateLimitService, 'read' | 'consume'> = new CodexRateLimitService(service),
@@ -101,7 +136,94 @@ export const createHttpApp = (
   });
   app.use(express.json({ limit: '50mb' }));
 
+  app.post([
+    '/deepseek/:keyId/responses',
+    '/deepseek/:keyId/v1/responses',
+    '/deepseek/:keyId/chat/completions',
+    '/deepseek/:keyId/v1/chat/completions',
+  ], async (request, response) => {
+    const keyId = z.string().uuid().parse(request.params.keyId);
+    const endpoint = request.path.endsWith('/chat/completions') ? 'chat/completions' : 'responses';
+    const stream = Boolean(request.body && typeof request.body === 'object' && request.body.stream === true);
+    const context = await deepSeekProxyService.proxy(
+      keyId, endpoint, request.body, request.header('authorization'),
+    );
+    const status = context.response.status;
+    response.status(status);
+    response.setHeader('X-Request-Id', context.requestId);
+    if (!context.response.body) {
+      deepSeekProxyService.record(context, '', status, null);
+      response.end();
+      return;
+    }
+    const reader = context.response.body.getReader();
+    let captured = '';
+    let ttftMs: number | null = null;
+    if (stream && context.response.ok) {
+      response.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      response.setHeader('Cache-Control', 'no-cache');
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (ttftMs === null && value.byteLength) ttftMs = Date.now() - context.startedAt;
+        captured = deepSeekProxyService.captureAppend(captured, value);
+        response.write(Buffer.from(value));
+      }
+      deepSeekProxyService.record(context, captured, status, ttftMs);
+      response.end();
+      return;
+    }
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (ttftMs === null && value.byteLength) ttftMs = Date.now() - context.startedAt;
+      captured = deepSeekProxyService.captureAppend(captured, value);
+    }
+    deepSeekProxyService.record(context, captured, status, ttftMs);
+    response.type(context.response.headers.get('content-type') ?? 'application/json').send(captured);
+  });
+
   app.get('/api/health', (_request, response) => response.json({ status: 'ok' }));
+  app.get('/api/deepseek/keys', (_request, response) => {
+    response.json({ keys: deepSeekKeyService.list() });
+  });
+  app.post('/api/deepseek/keys', async (request, response) => {
+    const input = deepSeekKeySchema.parse(request.body);
+    response.status(201).json({
+      key: await deepSeekKeyService.create(input.name, input.apiKey, input.billingCurrency),
+    });
+  });
+  app.patch('/api/deepseek/keys/order', (request, response) => {
+    response.json({ keys: deepSeekKeyService.reorder(authOrderSchema.parse(request.body).ids) });
+  });
+  app.delete('/api/deepseek/keys/:id', (request, response) => {
+    deepSeekKeyService.delete(z.string().uuid().parse(request.params.id));
+    response.status(204).end();
+  });
+  app.get('/api/deepseek/models', async (request, response) => {
+    const input = deepSeekModelsQuerySchema.parse({ keyId: queryString(request.query.keyId) });
+    response.json(await deepSeekModelService.list(input.keyId));
+  });
+  app.get('/api/deepseek/balance', async (request, response) => {
+    const input = deepSeekModelsQuerySchema.parse({ keyId: queryString(request.query.keyId) });
+    response.json(await deepSeekBalanceService.read(input.keyId));
+  });
+  app.post('/api/deepseek/harness-config', (request, response) => {
+    const input = deepSeekHarnessSchema.parse(request.body);
+    response.json(deepSeekHarnessService.configuration(input.keyId, input.model));
+  });
+  app.post('/api/deepseek/harness-apply', async (request, response) => {
+    const input = deepSeekHarnessSchema.parse(request.body);
+    response.json(await deepSeekHarnessService.apply(input.keyId, input.model));
+  });
+  app.post('/api/deepseek/codex-config', async (request, response) => {
+    const input = deepSeekCodexSchema.parse(request.body);
+    response.json(await deepSeekCodexService.configuration(input.keyId, input.model, input.provider));
+  });
+  app.post('/api/deepseek/codex-apply', async (request, response) => {
+    const input = deepSeekCodexApplySchema.parse(request.body);
+    response.json(await deepSeekCodexService.apply(input.keyId, input.model, input.provider));
+  });
   app.post('/api/generated-images/open-directory', async (_request, response) => {
     if (!desktopIntegration.openGeneratedImagesDirectory) {
       throw new ServiceError('DESKTOP_INTEGRATION_UNAVAILABLE', 501);
@@ -145,13 +267,13 @@ export const createHttpApp = (
   app.post('/api/gateway-settings/rotate-key', (_request, response) => {
     response.json(gatewayService.rotateApiKey());
   });
-  app.post('/api/client-config', (request, response) => {
+  app.post('/api/client-config', async (request, response) => {
     const input = clientConfigSchema.parse(request.body);
-    response.json(gatewayService.getClientConfiguration(input.model));
+    response.json(await codexClientService.configuration(input.model, input.provider));
   });
   app.post('/api/codex-client/apply', async (request, response) => {
-    const input = clientConfigSchema.parse(request.body);
-    response.json(await codexClientService.apply(input.model));
+    const input = codexApplySchema.parse(request.body);
+    response.json(await codexClientService.apply(input.model, input.provider));
   });
   app.get('/api/models', async (request, response) => {
     response.json(await service.listAvailableModels(queryString(request.query.authFileId)));
@@ -254,7 +376,7 @@ export const createHttpApp = (
       size: input.size,
       quality: input.quality,
       ...(input.inputImages?.length ? { input_images: input.inputImages } : {}),
-    }, input.authFileId);
+    });
     const status = context.response.status;
     const captured = await context.response.text();
     if (!context.response.ok) {

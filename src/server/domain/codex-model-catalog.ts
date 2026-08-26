@@ -7,7 +7,6 @@ export type AvailableModel = {
 };
 
 type CatalogEntry = readonly [id: string, displayName: string];
-const HIDDEN_MODEL_IDS = new Set(['codex-auto-review']);
 
 const FREE_MODELS: CatalogEntry[] = [
   ['gpt-5.4-mini', 'GPT-5.4-Mini'],
@@ -64,9 +63,7 @@ export const mergeCodexModelCatalog = (
   liveModels: AvailableModel[],
   planType: string | null,
 ): AvailableModel[] => {
-  const models = new Map(
-    liveModels.filter((model) => !HIDDEN_MODEL_IDS.has(model.id)).map((model) => [model.id, model]),
-  );
+  const models = new Map(liveModels.map((model) => [model.id, model]));
   for (const entry of [...catalogForPlan(planType), ...IMAGE_MODELS]) {
     const model = toModel(entry);
     if (!models.has(model.id)) models.set(model.id, model);

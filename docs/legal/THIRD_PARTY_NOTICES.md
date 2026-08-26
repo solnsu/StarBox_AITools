@@ -84,5 +84,5 @@ SQLite has been dedicated to the public domain by its authors. See https://www.s
 
 ## Contact
 
-Project website: https://github.com/solnsu/StarBox  
+Project website: https://github.com/solnsu/StarBox_AITools
 Email: soln0708@163.com

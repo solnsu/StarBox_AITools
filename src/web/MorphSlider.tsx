@@ -233,15 +233,21 @@ void main() {
 
   float ca = uReduce < 0.5 ? uAberration * env * 0.03 : 0.0;
 
+  vec4 sampleCR = texture2D(tCurrent, sC + vec2(ca, 0.0));
+  vec4 sampleCG = texture2D(tCurrent, sC);
+  vec4 sampleCB = texture2D(tCurrent, sC - vec2(ca, 0.0));
+  vec4 sampleNR = texture2D(tNext, sN + vec2(ca, 0.0));
+  vec4 sampleNG = texture2D(tNext, sN);
+  vec4 sampleNB = texture2D(tNext, sN - vec2(ca, 0.0));
   vec3 colC = vec3(
-    texture2D(tCurrent, sC + vec2(ca, 0.0)).r,
-    texture2D(tCurrent, sC).g,
-    texture2D(tCurrent, sC - vec2(ca, 0.0)).b
+    mix(uOverlay.r, sampleCR.r, sampleCR.a),
+    mix(uOverlay.g, sampleCG.g, sampleCG.a),
+    mix(uOverlay.b, sampleCB.b, sampleCB.a)
   );
   vec3 colN = vec3(
-    texture2D(tNext, sN + vec2(ca, 0.0)).r,
-    texture2D(tNext, sN).g,
-    texture2D(tNext, sN - vec2(ca, 0.0)).b
+    mix(uOverlay.r, sampleNR.r, sampleNR.a),
+    mix(uOverlay.g, sampleNG.g, sampleNG.a),
+    mix(uOverlay.b, sampleNB.b, sampleNB.a)
   );
 
   if (uContain > 0.5) {

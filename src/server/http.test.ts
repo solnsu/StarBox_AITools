@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { request, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -10,10 +10,17 @@ import { LocalVault } from './infra/vault.js';
 import { AuthRepository } from './repositories/auth-repository.js';
 import { CreationRepository } from './repositories/creation-repository.js';
 import { GatewayRepository } from './repositories/gateway-repository.js';
+import { DeepSeekKeyRepository } from './repositories/deepseek-key-repository.js';
 import { AuthService } from './services/auth-service.js';
 import { GatewayService } from './services/gateway-service.js';
 import { ModelPricingService } from './services/model-pricing-service.js';
 import { CreationService } from './services/creation-service.js';
+import { DeepSeekKeyService } from './services/deepseek-key-service.js';
+import { DeepSeekModelService } from './services/deepseek-model-service.js';
+import { DeepSeekBalanceService } from './services/deepseek-balance-service.js';
+import { DeepSeekHarnessService } from './services/deepseek-harness-service.js';
+import { DeepSeekCodexService } from './services/deepseek-codex-service.js';
+import { DeepSeekProxyService } from './services/deepseek-proxy-service.js';
 import type { DesktopIntegration } from './desktop-integration.js';
 
 type HttpResult = { status: number; body: string; headers: Record<string, string | string[] | undefined> };
@@ -69,8 +76,23 @@ describe('local model API HTTP routes', () => {
       remoteUrl: 'https://example.test/model-pricing.json',
       fetcher: async () => new Response('', { status: 503 }),
     });
-    const gateway = new GatewayService(new GatewayRepository(database, pricing), vault, auth, pricing, 'test');
+    const gatewayRepository = new GatewayRepository(database, pricing);
+    const gateway = new GatewayService(gatewayRepository, vault, auth, pricing, 'test');
     const creation = new CreationService(new CreationRepository(database), path.join(dataDir, 'generated-images'), 'test');
+    const deepSeekKeys = new DeepSeekKeyService(
+      new DeepSeekKeyRepository(database), vault, 'test',
+      async () => new Response(JSON.stringify({
+        is_available: true,
+        balance_infos: [{
+          currency: 'CNY', total_balance: '10.00', granted_balance: '0.00', topped_up_balance: '10.00',
+        }],
+      }), { status: 200 }),
+    );
+    const deepSeekModels = new DeepSeekModelService(deepSeekKeys);
+    const deepSeekBalance = new DeepSeekBalanceService(deepSeekKeys);
+    const deepSeekHarness = new DeepSeekHarnessService(deepSeekKeys, path.join(dataDir, 'dsh'));
+    const deepSeekCodex = new DeepSeekCodexService(deepSeekKeys, path.join(dataDir, 'codex'));
+    const deepSeekProxy = new DeepSeekProxyService(deepSeekKeys, gatewayRepository, 'test');
     desktopIntegration = {};
     rateLimitRead = vi.fn(async () => ({ availableCount: 1, credits: [] }));
     rateLimitConsume = vi.fn(async () => ({ outcome: 'reset', availableCount: 0, credits: [] }));
@@ -78,11 +100,228 @@ describe('local model API HTTP routes', () => {
       type: 'codex', account_id: 'account-1', email: 'user@example.com', access_token: 'access-value',
       chatgpt_plan_type: 'plus',
     });
-    server = createHttpApp(auth, gateway, path.join(dataDir, 'missing-web'), creation, undefined, desktopIntegration, {
+    server = createHttpApp(auth, gateway, path.join(dataDir, 'missing-web'), creation, deepSeekKeys, deepSeekModels, deepSeekBalance, deepSeekHarness, deepSeekCodex, deepSeekProxy, undefined, desktopIntegration, {
       read: rateLimitRead,
       consume: rateLimitConsume,
     }).listen(0, '127.0.0.1');
     await new Promise<void>((resolve) => server.once('listening', resolve));
+  });
+
+  it('creates and lists masked DeepSeek API keys', async () => {
+    const created = await send(server, 'POST', '/api/deepseek/keys', {
+      name: 'Primary key', apiKey: 'sk-deepseek-secret-value', billingCurrency: 'CNY',
+    });
+    expect(created.status).toBe(201);
+    expect(created.body).not.toContain('sk-deepseek-secret-value');
+
+    const listed = await send(server, 'GET', '/api/deepseek/keys');
+    expect(listed.status).toBe(200);
+    expect(JSON.parse(listed.body)).toMatchObject({
+      keys: [{ name: 'Primary key', baseUrl: 'https://api.deepseek.com', maskedKey: 'sk-deeps*****alue', billingCurrency: 'CNY' }],
+    });
+    expect(listed.body).not.toContain('sk-deepseek-secret-value');
+  });
+
+  it('previews and applies a DeepSeek model to DeepSeek Harness without returning the API key', async () => {
+    const secret = 'sk-deepseek-harness-secret';
+    const created = await send(server, 'POST', '/api/deepseek/keys', {
+      name: 'Harness key', apiKey: secret, billingCurrency: 'CNY',
+    });
+    const keyId = (JSON.parse(created.body) as { key: { id: string } }).key.id;
+
+    const preview = await send(server, 'POST', '/api/deepseek/harness-config', {
+      keyId, model: 'deepseek-chat',
+    });
+    expect(preview.status).toBe(200);
+    expect(preview.body).not.toContain(secret);
+    expect(JSON.parse(preview.body)).toMatchObject({
+      kind: 'deepseek-harness', model: 'deepseek-chat',
+      endpoint: `http://127.0.0.1:4312/deepseek/${keyId}`,
+    });
+
+    const applied = await send(server, 'POST', '/api/deepseek/harness-apply', {
+      keyId, model: 'deepseek-chat',
+    });
+    expect(applied.status).toBe(200);
+    expect(applied.body).not.toContain(secret);
+    expect(JSON.parse(applied.body)).toMatchObject({
+      model: 'deepseek-chat', files: ['.credentials.yaml', 'settings.yaml'],
+    });
+    expect(readFileSync(path.join(dataDir, 'dsh', '.credentials.yaml'), 'utf8')).toContain(secret);
+    expect(readFileSync(path.join(dataDir, 'dsh', 'settings.yaml'), 'utf8')).toContain('model: deepseek-chat');
+  });
+
+  it('previews and applies an official DeepSeek model to Codex without returning the API key', async () => {
+    const secret = 'sk-deepseek-codex-secret';
+    const created = await send(server, 'POST', '/api/deepseek/keys', {
+      name: 'Codex key', apiKey: secret, billingCurrency: 'CNY',
+    });
+    const keyId = (JSON.parse(created.body) as { key: { id: string } }).key.id;
+
+    const preview = await send(server, 'POST', '/api/deepseek/codex-config', {
+      keyId, model: 'deepseek-v4-flash',
+    });
+    expect(preview.status).toBe(200);
+    expect(preview.body).not.toContain(secret);
+    expect(JSON.parse(preview.body)).toMatchObject({
+      kind: 'deepseek-codex', model: 'deepseek-v4-flash', provider: 'deepseek',
+      endpoint: `http://127.0.0.1:4312/deepseek/${keyId}`,
+    });
+
+    const applied = await send(server, 'POST', '/api/deepseek/codex-apply', {
+      keyId, model: 'deepseek-v4-flash', provider: 'krill',
+    });
+    expect(applied.status).toBe(200);
+    expect(applied.body).not.toContain(secret);
+    expect(JSON.parse(applied.body)).toMatchObject({
+      model: 'deepseek-v4-flash', provider: 'krill', files: ['config.toml', 'models.json'],
+    });
+    const config = readFileSync(path.join(dataDir, 'codex', 'config.toml'), 'utf8');
+    expect(config).toContain('wire_api = "responses"');
+    expect(config).toContain('model_provider = "krill"');
+    expect(config).toContain(secret);
+    const models = JSON.parse(readFileSync(path.join(dataDir, 'codex', 'models.json'), 'utf8')) as {
+      models: Array<{ slug: string }>;
+    };
+    expect(models.models).toHaveLength(3);
+  });
+
+  it('proxies a DeepSeek Responses request and exposes its CNY request log', async () => {
+    const secret = 'sk-deepseek-proxy-secret';
+    const created = await send(server, 'POST', '/api/deepseek/keys', {
+      name: 'Proxy key', apiKey: secret, billingCurrency: 'CNY',
+    });
+    const keyId = (JSON.parse(created.body) as { key: { id: string } }).key.id;
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      expect(String(url)).toBe('https://api.deepseek.com/responses');
+      expect((init?.headers as Record<string, string>).Authorization).toBe(`Bearer ${secret}`);
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        model: 'deepseek-v4-flash', input: 'hello', stream: false,
+      });
+      return new Response(JSON.stringify({
+        id: 'deepseek-response-1',
+        usage: {
+          input_tokens: 1_000,
+          output_tokens: 250,
+          total_tokens: 1_250,
+          input_tokens_details: { cached_tokens: 200 },
+        },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json', 'x-request-id': 'deepseek-request-1' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const rejected = await send(server, 'POST', `/deepseek/${keyId}/responses`, {
+      model: 'deepseek-v4-flash', input: 'hello', stream: false,
+    }, { Authorization: 'Bearer wrong-secret' });
+    expect(rejected.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const proxied = await send(server, 'POST', `/deepseek/${keyId}/responses`, {
+      model: 'deepseek-v4-flash', input: 'hello', stream: false,
+    }, { Authorization: `Bearer ${secret}` });
+    expect(proxied.status).toBe(200);
+    expect(JSON.parse(proxied.body)).toMatchObject({ id: 'deepseek-response-1' });
+    expect(proxied.headers['x-request-id']).toBe('deepseek-request-1');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const dashboard = JSON.parse((await send(server, 'GET', `/api/request-logs?accountId=${keyId}`)).body) as {
+      logs: Array<Record<string, unknown>>;
+      summary: { totalRequests: number; estimatedCosts: Array<{ amount: number; currency: string }> };
+    };
+    expect(dashboard.logs).toEqual([expect.objectContaining({
+      requestId: 'deepseek-request-1',
+      provider: 'deepseek',
+      model: 'deepseek-v4-flash',
+      accountIdSnapshot: keyId,
+      accountSnapshot: 'Proxy key',
+      inputTokens: 1_000,
+      outputTokens: 250,
+      cachedTokens: 200,
+      totalTokens: 1_250,
+      failed: false,
+      estimatedCost: expect.objectContaining({ currency: 'CNY' }),
+    })]);
+    expect(dashboard.summary.totalRequests).toBe(1);
+    expect(dashboard.summary.estimatedCosts).toEqual([
+      expect.objectContaining({ currency: 'CNY' }),
+    ]);
+  });
+
+  it('reorders and deletes DeepSeek API keys', async () => {
+    const firstResponse = await send(server, 'POST', '/api/deepseek/keys', {
+      name: 'First key', apiKey: 'sk-first-secret', billingCurrency: 'CNY',
+    });
+    const secondResponse = await send(server, 'POST', '/api/deepseek/keys', {
+      name: 'Second key', apiKey: 'sk-second-secret', billingCurrency: 'USD',
+    });
+    const firstId = (JSON.parse(firstResponse.body) as { key: { id: string } }).key.id;
+    const secondId = (JSON.parse(secondResponse.body) as { key: { id: string } }).key.id;
+
+    const reordered = await send(server, 'PATCH', '/api/deepseek/keys/order', { ids: [secondId, firstId] });
+    expect(reordered.status).toBe(200);
+    expect((JSON.parse(reordered.body) as { keys: Array<{ id: string }> }).keys.map((key) => key.id))
+      .toEqual([secondId, firstId]);
+
+    const deleted = await send(server, 'DELETE', `/api/deepseek/keys/${secondId}`);
+    expect(deleted.status).toBe(204);
+    const listed = await send(server, 'GET', '/api/deepseek/keys');
+    expect((JSON.parse(listed.body) as { keys: Array<{ id: string }> }).keys.map((key) => key.id))
+      .toEqual([firstId]);
+  });
+
+  it('fetches the DeepSeek model catalog with the selected encrypted key', async () => {
+    const created = await send(server, 'POST', '/api/deepseek/keys', {
+      name: 'Model key', apiKey: 'sk-model-secret', billingCurrency: 'CNY',
+    });
+    const keyId = (JSON.parse(created.body) as { key: { id: string } }).key.id;
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer sk-model-secret');
+      return new Response(JSON.stringify({
+        object: 'list',
+        data: [
+          { id: 'deepseek-chat', object: 'model', owned_by: 'deepseek' },
+          { id: 'deepseek-reasoner', object: 'model', owned_by: 'deepseek' },
+        ],
+      }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const models = await send(server, 'GET', `/api/deepseek/models?keyId=${keyId}`);
+    expect(models.status).toBe(200);
+    expect(JSON.parse(models.body)).toMatchObject({
+      keyId,
+      models: [{ id: 'deepseek-chat' }, { id: 'deepseek-reasoner' }],
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('fetches normalized DeepSeek balance information with the selected key', async () => {
+    const created = await send(server, 'POST', '/api/deepseek/keys', {
+      name: 'Balance key', apiKey: 'sk-balance-secret', billingCurrency: 'CNY',
+    });
+    const keyId = (JSON.parse(created.body) as { key: { id: string } }).key.id;
+    vi.stubGlobal('fetch', vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer sk-balance-secret');
+      return new Response(JSON.stringify({
+        is_available: true,
+        balance_infos: [{
+          currency: 'CNY', total_balance: '110.00', granted_balance: '10.00', topped_up_balance: '100.00',
+        }],
+      }), { status: 200 });
+    }));
+
+    const balance = await send(server, 'GET', `/api/deepseek/balance?keyId=${keyId}`);
+    expect(balance.status).toBe(200);
+    expect(JSON.parse(balance.body)).toMatchObject({
+      keyId,
+      isAvailable: true,
+      balanceInfos: [{
+        currency: 'CNY', totalBalance: '110.00', grantedBalance: '10.00', toppedUpBalance: '100.00',
+      }],
+    });
   });
 
   afterEach(async () => {
@@ -135,16 +374,16 @@ describe('local model API HTTP routes', () => {
       expect(String(url)).toContain('/backend-api/codex/models?client_version=');
       return new Response(JSON.stringify({ models: [
         { slug: 'gpt-5.4', display_name: 'GPT-5.4' },
+        { slug: 'codex-auto-review', display_name: 'Codex Auto Review', visibility: 'hide' },
       ] }), { status: 200 });
     }));
     const models = await send(server, 'GET', '/v1/models', undefined, { Authorization: `Bearer ${apiKey}` });
     const modelPayload = JSON.parse(models.body) as { object: string; data: Array<{ id: string }> };
     expect(modelPayload.object).toBe('list');
-    expect(modelPayload.data).toHaveLength(9);
+    expect(modelPayload.data).toHaveLength(10);
     expect(modelPayload.data.map((model) => model.id)).toEqual(expect.arrayContaining([
-      'gpt-5.4', 'gpt-5.3-codex-spark', 'gpt-image-1.5', 'gpt-image-2',
+      'gpt-5.4', 'codex-auto-review', 'gpt-5.3-codex-spark', 'gpt-image-1.5', 'gpt-image-2',
     ]));
-    expect(modelPayload.data.map((model) => model.id)).not.toContain('codex-auto-review');
 
     const authFile = await send(server, 'GET', '/api/client-files/auth.json');
     expect(JSON.parse(authFile.body)).toEqual({ OPENAI_API_KEY: apiKey });
@@ -246,8 +485,6 @@ describe('local model API HTTP routes', () => {
   });
 
   it('persists generated images and restores creation conversations', async () => {
-    const files = JSON.parse((await send(server, 'GET', '/api/auth-files')).body) as { files: Array<{ id: string }> };
-    const authFileId = files.files[0]!.id;
     const sessionId = randomUUID();
     const userMessageId = randomUUID();
     const createdAt = Date.now();
@@ -259,7 +496,6 @@ describe('local model API HTTP routes', () => {
     }), { status: 200, headers: { 'content-type': 'application/json', 'x-request-id': 'creation-1' } })));
 
     const generated = await send(server, 'POST', '/api/creation/generate', {
-      authFileId,
       sessionId,
       session: { id: sessionId, title: 'Robot', createdAt },
       userMessage: {

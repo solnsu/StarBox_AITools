@@ -1,6 +1,6 @@
 StarBox Open Source Software Notice
 
-Effective Date: 2026-08-21
+Effective Date: 2026-08-26
 
 Copyright 2026 solnsu.
 
@@ -24,7 +24,7 @@ StarBox may process or store authentication information, access tokens, account 
 
 5. Third-Party Services
 
-StarBox may interact with OpenAI, ChatGPT, Codex, and other third-party services. Use of those services remains subject to the applicable provider's terms, policies, technical restrictions, and account rules. StarBox is an independently developed third-party project and is not affiliated with, sponsored by, authorized by, or officially partnered with OpenAI.
+StarBox may interact with OpenAI, ChatGPT, Codex, DeepSeek, and other third-party services. Use of those services remains subject to the applicable provider's terms, policies, technical restrictions, and account rules. StarBox is an independently developed third-party project and is not affiliated with, sponsored by, authorized by, or officially partnered with OpenAI or DeepSeek.
 
 6. Privacy and Local Data
 
@@ -36,5 +36,5 @@ Unless required by applicable law or separately agreed in writing, StarBox is pr
 
 8. Project Information
 
-Project website: https://github.com/solnsu/StarBox
+Project website: https://github.com/solnsu/StarBox_AITools
 Email: soln0708@163.com

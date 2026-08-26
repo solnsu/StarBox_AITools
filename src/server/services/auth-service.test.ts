@@ -48,6 +48,19 @@ describe('AuthService', () => {
       .toThrow('FILE_NAME_EXISTS');
   });
 
+  it('moves a cooled credential to the end of the persisted order', () => {
+    const first = service.import('first.json', {
+      type: 'codex', access_token: 'first-token', account_id: 'account-first',
+    });
+    const second = service.import('second.json', {
+      type: 'codex', access_token: 'second-token', account_id: 'account-second',
+    });
+
+    service.moveToEnd(first.id);
+
+    expect(service.list().map((file) => file.id)).toEqual([second.id, first.id]);
+  });
+
   it('inspects live quota and persists the normalized result', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
       plan_type: 'plus',
@@ -156,7 +169,8 @@ describe('AuthService', () => {
     expect(result.accountId).toBe('account-1');
     expect(result.models.map((model) => model.id)).toEqual([
       'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4',
-      'gpt-5.4-mini', 'gpt-5.3-codex-spark', 'gpt-image-1.5', 'gpt-image-2',
+      'gpt-5.4-mini', 'codex-auto-review', 'gpt-5.3-codex-spark', 'gpt-image-1.5',
+      'gpt-image-2',
     ]);
     expect(result.models.find((model) => model.id === 'gpt-5.4')).toMatchObject({
       displayName: 'GPT-5.4', defaultReasoningLevel: 'medium',

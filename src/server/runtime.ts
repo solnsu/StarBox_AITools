@@ -7,11 +7,18 @@ import { LocalVault } from './infra/vault.js';
 import { AuthRepository } from './repositories/auth-repository.js';
 import { CreationRepository } from './repositories/creation-repository.js';
 import { GatewayRepository } from './repositories/gateway-repository.js';
+import { DeepSeekKeyRepository } from './repositories/deepseek-key-repository.js';
 import { AuthService } from './services/auth-service.js';
 import { CodexClientService } from './services/codex-client-service.js';
 import { CreationService } from './services/creation-service.js';
 import { GatewayService } from './services/gateway-service.js';
 import { ModelPricingService } from './services/model-pricing-service.js';
+import { DeepSeekKeyService } from './services/deepseek-key-service.js';
+import { DeepSeekModelService } from './services/deepseek-model-service.js';
+import { DeepSeekBalanceService } from './services/deepseek-balance-service.js';
+import { DeepSeekHarnessService } from './services/deepseek-harness-service.js';
+import { DeepSeekCodexService } from './services/deepseek-codex-service.js';
+import { DeepSeekProxyService } from './services/deepseek-proxy-service.js';
 import type { DesktopIntegration } from './desktop-integration.js';
 
 export type ServerRuntime = {
@@ -29,6 +36,7 @@ export const startServer = (
   const vault = new LocalVault(config.dataDir);
   const pricingService = new ModelPricingService({
     cachePath: path.join(config.dataDir, 'model-pricing.json'),
+    seedPath: config.pricingCatalogPath,
     remoteUrl: config.pricingCatalogUrl,
   });
   const service = new AuthService(new AuthRepository(database), vault, {
@@ -37,8 +45,9 @@ export const startServer = (
     timeoutMs: config.inspectionTimeoutMs,
     concurrency: config.inspectionConcurrency,
   });
+  const gatewayRepository = new GatewayRepository(database, pricingService);
   const gatewayService = new GatewayService(
-    new GatewayRepository(database, pricingService),
+    gatewayRepository,
     vault,
     service,
     pricingService,
@@ -50,11 +59,30 @@ export const startServer = (
     path.join(config.dataDir, 'generated-images'),
     config.tenantId,
   );
+  const deepSeekKeyService = new DeepSeekKeyService(
+    new DeepSeekKeyRepository(database),
+    vault,
+    config.tenantId,
+  );
+  const deepSeekModelService = new DeepSeekModelService(deepSeekKeyService);
+  const deepSeekBalanceService = new DeepSeekBalanceService(deepSeekKeyService);
+  const deepSeekProxyBaseUrl = `http://${config.host}:${config.port}/deepseek`;
+  const deepSeekHarnessService = new DeepSeekHarnessService(deepSeekKeyService, undefined, deepSeekProxyBaseUrl);
+  const deepSeekCodexService = new DeepSeekCodexService(deepSeekKeyService, undefined, deepSeekProxyBaseUrl);
+  const deepSeekProxyService = new DeepSeekProxyService(
+    deepSeekKeyService, gatewayRepository, config.tenantId,
+  );
   const app = createHttpApp(
     service,
     gatewayService,
     config.webDir,
     creationService,
+    deepSeekKeyService,
+    deepSeekModelService,
+    deepSeekBalanceService,
+    deepSeekHarnessService,
+    deepSeekCodexService,
+    deepSeekProxyService,
     new CodexClientService(gatewayService),
     desktopIntegration,
   );

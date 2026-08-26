@@ -39,6 +39,33 @@ export type AuthFile = {
   latestInspection: Inspection | null;
 };
 
+export type DeepSeekApiKey = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  maskedKey: string;
+  billingCurrency: BillingCurrency;
+  disabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type BillingCurrency = 'CNY' | 'USD';
+
+export type DeepSeekBalanceInfo = {
+  currency: string;
+  totalBalance: string;
+  grantedBalance: string;
+  toppedUpBalance: string;
+};
+
+export type DeepSeekBalance = {
+  keyId: string;
+  isAvailable: boolean;
+  balanceInfos: DeepSeekBalanceInfo[];
+  checkedAt: number;
+};
+
 export type Notice = { id: number; type: 'success' | 'error'; message: string; closing?: boolean };
 
 export type GatewaySettings = {
@@ -68,6 +95,7 @@ export type RequestLog = {
   requestId: string | null;
   timestampMs: number;
   provider: string;
+  billingCurrency: BillingCurrency | null;
   model: string | null;
   endpoint: string | null;
   method: string | null;
@@ -90,7 +118,7 @@ export type RequestLog = {
   failStatusCode: number | null;
   failSummary: string | null;
   responseContent: string | null;
-  estimatedCostUsd: number;
+  estimatedCost: EstimatedCost | null;
   createdAt: number;
 };
 
@@ -101,8 +129,9 @@ export type RequestLogSummary = {
   totalTokens: number;
   inputTokens: number;
   outputTokens: number;
+  cacheEligibleInputTokens: number;
   cachedTokens: number;
-  estimatedCostUsd?: number;
+  estimatedCosts: EstimatedCost[];
   averageLatencyMs: number | null;
   lastRequestAt: number | null;
 };
@@ -110,5 +139,10 @@ export type RequestLogSummary = {
 export type RequestTrendPoint = {
   dayStartMs: number;
   requestCount: number;
-  estimatedCostUsd: number;
+  estimatedCosts: EstimatedCost[];
+};
+
+export type EstimatedCost = {
+  amount: number;
+  currency: 'USD' | 'CNY';
 };

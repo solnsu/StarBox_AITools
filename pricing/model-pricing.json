@@ -1,22 +1,73 @@
 {
-  "version": "2026.08.21",
-  "publishedAt": "2026-08-21T00:00:00.000Z",
-  "currency": "USD",
+  "version": "2026.08.26",
+  "publishedAt": "2026-08-26T00:00:00.000Z",
   "unit": "per_million_tokens",
-  "source": "https://developers.openai.com/api/docs/pricing",
-  "models": {
-    "gpt-5.6-sol": { "input": 5, "cachedInput": 0.5, "output": 30 },
-    "gpt-5.6-terra": { "input": 2, "cachedInput": 0.2, "output": 12 },
-    "gpt-5.6-luna": { "input": 0.2, "cachedInput": 0.02, "output": 1.2 },
-    "gpt-5.5": { "input": 5, "cachedInput": 0.5, "output": 30 },
-    "gpt-5.4": { "input": 2.5, "cachedInput": 0.25, "output": 15 },
-    "gpt-5.4-mini": { "input": 0.75, "cachedInput": 0.075, "output": 4.5 },
-    "gpt-5.3-codex": { "input": 1.75, "cachedInput": 0.175, "output": 14 },
-    "gpt-image-1.5": { "input": 8, "cachedInput": 2, "output": 32 },
-    "gpt-image-2": { "input": 8, "cachedInput": 2, "output": 30 }
-  },
-  "aliases": {
-    "gpt-5.3-codex-spark": "gpt-5.3-codex",
-    "codex-auto-review": "gpt-5.3-codex"
+  "providers": {
+    "codex": {
+      "currency": "USD",
+      "source": "https://developers.openai.com/api/docs/pricing",
+      "pricingMode": "fixed",
+      "models": {
+        "gpt-5.6-sol": { "input": 5, "cachedInput": 0.5, "output": 30 },
+        "gpt-5.6-terra": { "input": 2, "cachedInput": 0.2, "output": 12 },
+        "gpt-5.6-luna": { "input": 0.2, "cachedInput": 0.02, "output": 1.2 },
+        "gpt-5.5": { "input": 5, "cachedInput": 0.5, "output": 30 },
+        "gpt-5.4": { "input": 2.5, "cachedInput": 0.25, "output": 15 },
+        "gpt-5.4-mini": { "input": 0.75, "cachedInput": 0.075, "output": 4.5 },
+        "gpt-5.3-codex": { "input": 1.75, "cachedInput": 0.175, "output": 14 },
+        "gpt-image-1.5": { "input": 8, "cachedInput": 2, "output": 32 },
+        "gpt-image-2": { "input": 8, "cachedInput": 2, "output": 30 }
+      },
+      "aliases": {
+        "gpt-5.3-codex-spark": "gpt-5.3-codex",
+        "codex-auto-review": "gpt-5.3-codex"
+      }
+    },
+    "deepseek": {
+      "pricingMode": "time_window",
+      "timezone": "Asia/Shanghai",
+      "defaultTier": "off_peak",
+      "windows": [
+        { "tier": "peak", "weekdays": [1, 2, 3, 4, 5], "start": "09:00", "end": "12:00" },
+        { "tier": "peak", "weekdays": [1, 2, 3, 4, 5], "start": "14:00", "end": "18:00" }
+      ],
+      "currencies": {
+        "CNY": {
+          "source": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing",
+          "models": {
+            "deepseek-v4-flash": {
+              "off_peak": { "input": 1.5, "cachedInput": 0.05, "output": 4.5 },
+              "peak": { "input": 3, "cachedInput": 0.1, "output": 9 }
+            },
+            "deepseek-v4-pro": {
+              "off_peak": { "input": 4.5, "cachedInput": 0.15, "output": 13.5 },
+              "peak": { "input": 9, "cachedInput": 0.3, "output": 27 }
+            },
+            "deepseek-v4-flash-vision-exp": {
+              "off_peak": { "input": 1.5, "cachedInput": 0.05, "output": 4.5 },
+              "peak": { "input": 3, "cachedInput": 0.1, "output": 9 }
+            }
+          }
+        },
+        "USD": {
+          "source": "https://api-docs.deepseek.com/quick_start/pricing",
+          "models": {
+            "deepseek-v4-flash": {
+              "off_peak": { "input": 0.22, "cachedInput": 0.007, "output": 0.66 },
+              "peak": { "input": 0.44, "cachedInput": 0.014, "output": 1.32 }
+            },
+            "deepseek-v4-pro": {
+              "off_peak": { "input": 0.66, "cachedInput": 0.022, "output": 1.98 },
+              "peak": { "input": 1.32, "cachedInput": 0.044, "output": 3.96 }
+            },
+            "deepseek-v4-flash-vision-exp": {
+              "off_peak": { "input": 0.22, "cachedInput": 0.007, "output": 0.66 },
+              "peak": { "input": 0.44, "cachedInput": 0.014, "output": 1.32 }
+            }
+          }
+        }
+      },
+      "aliases": {}
+    }
   }
 }

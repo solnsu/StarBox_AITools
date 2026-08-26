@@ -10,6 +10,7 @@ export type RequestLogInput = {
   requestId: string | null;
   timestampMs: number;
   provider: string;
+  billingCurrency: 'USD' | 'CNY' | null;
   model: string | null;
   endpoint: string | null;
   method: string | null;
@@ -105,6 +106,7 @@ export const parseUsageQueueItem = (value: unknown): RequestLogInput | null => {
     requestId: text(raw.request_id, 256),
     timestampMs: timestamp(raw),
     provider: 'codex',
+    billingCurrency: 'USD',
     model: text(raw.requested_model ?? raw.model, 256),
     ...route,
     authIndex: text(raw.auth_index, 256),

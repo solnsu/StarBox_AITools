@@ -140,6 +140,10 @@ export class AuthService {
     catch (error) { if (error instanceof Error && error.message === 'AUTH_ORDER_INVALID') throw new ServiceError('AUTH_ORDER_INVALID', 400); throw error; }
   }
 
+  moveToEnd(id: string): void {
+    this.repository.moveToEnd(this.config.tenantId, id);
+  }
+
   async inspect(id: string): Promise<Inspection> {
     const file = this.requireStored(id);
     const inspection = file.disabled

@@ -1,11 +1,14 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
+  estimateModelCost,
   estimateModelCostUsd,
   parseModelPricingCatalog,
   resolveModelPrice,
   type ModelPricingCatalog,
   type ModelUsage,
+  type PricingCurrency,
+  type ProviderModelUsage,
 } from '../domain/model-pricing.js';
 
 const MAX_CATALOG_BYTES = 512 * 1024;
@@ -15,6 +18,7 @@ const FETCH_TIMEOUT_MS = 10_000;
 
 type PricingServiceInput = {
   cachePath: string;
+  seedPath?: string;
   remoteUrl: string;
   fetcher?: typeof fetch;
 };
@@ -37,23 +41,38 @@ export class ModelPricingService {
   constructor(private readonly input: PricingServiceInput) {
     try {
       this.catalog = readCatalog(input.cachePath);
-    } catch { /* a first launch has no cache until the initial remote refresh succeeds */ }
+    } catch {
+      try {
+        this.catalog = input.seedPath ? readCatalog(input.seedPath) : null;
+      } catch { /* remote refresh is the final source when neither local catalog is valid */ }
+    }
   }
 
   get version(): string | null { return this.catalog?.version ?? null; }
 
-  hasPrice(model: string): boolean {
-    return this.catalog ? resolveModelPrice(this.catalog, model) !== null : false;
+  hasPrice(
+    model: string,
+    provider = 'codex',
+    timestampMs = Date.now(),
+    billingCurrency?: PricingCurrency,
+  ): boolean {
+    return this.catalog
+      ? resolveModelPrice(this.catalog, model, provider, timestampMs, billingCurrency) !== null
+      : false;
   }
 
   estimateCostUsd(usage: ModelUsage): number {
     return this.catalog ? estimateModelCostUsd(this.catalog, usage) : 0;
   }
 
-  async ensurePrice(model: string): Promise<boolean> {
-    if (this.hasPrice(model)) return true;
+  estimateCost(usage: ProviderModelUsage) {
+    return this.catalog ? estimateModelCost(this.catalog, usage) : null;
+  }
+
+  async ensurePrice(model: string, provider = 'codex', billingCurrency?: PricingCurrency): Promise<boolean> {
+    if (this.hasPrice(model, provider, Date.now(), billingCurrency)) return true;
     await this.refresh();
-    return this.hasPrice(model);
+    return this.hasPrice(model, provider, Date.now(), billingCurrency);
   }
 
   start(): void {

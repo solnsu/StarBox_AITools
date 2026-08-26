@@ -7,11 +7,13 @@ import { ModelPricingService } from './model-pricing-service.js';
 const catalog = (version: string, publishedAt: string, models: Record<string, unknown>) => ({
   version,
   publishedAt,
-  currency: 'USD',
   unit: 'per_million_tokens',
-  source: 'https://developers.openai.com/api/docs/pricing',
-  models,
-  aliases: {},
+  providers: {
+    codex: {
+      currency: 'USD', source: 'https://developers.openai.com/api/docs/pricing',
+      pricingMode: 'fixed', models, aliases: {},
+    },
+  },
 });
 
 describe('ModelPricingService', () => {
@@ -74,5 +76,23 @@ describe('ModelPricingService', () => {
     expect(service.version).toBeNull();
     expect(await service.ensurePrice('gpt-known')).toBe(false);
     expect(service.hasPrice('gpt-known')).toBe(false);
+  });
+
+  it('loads the bundled catalog when the writable cache is absent or invalid', () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'pricing-service-test-'));
+    directories.push(directory);
+    const cachePath = path.join(directory, 'model-pricing.json');
+    const seedPath = path.join(directory, 'bundled-model-pricing.json');
+    writeFileSync(cachePath, '{"invalid":true}');
+    writeFileSync(seedPath, JSON.stringify(catalog('2', '2026-08-26T00:00:00.000Z', {
+      'deepseek-v4-flash': { input: 1.5, cachedInput: 0.05, output: 4.5 },
+    })));
+
+    const service = new ModelPricingService({
+      cachePath, seedPath, remoteUrl: 'https://example.test/model-pricing.json',
+    });
+
+    expect(service.version).toBe('2');
+    expect(service.hasPrice('deepseek-v4-flash')).toBe(true);
   });
 });

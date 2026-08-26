@@ -50,5 +50,5 @@ StarBox is an independently developed third-party project and is not affiliated 
 
 “OpenAI,” “ChatGPT,” and “Codex” are trademarks of their respective owners. These names are used solely to identify the products and services with which StarBox is compatible or integrated.
 
-Project website: https://github.com/solnsu/StarBox  
+Project website: https://github.com/solnsu/StarBox_AITools
 Email: soln0708@163.com

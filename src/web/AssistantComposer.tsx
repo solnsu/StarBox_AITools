@@ -10,7 +10,7 @@ import { CustomSelect } from './CustomSelect';
 // this UI-only extraction can run inside the existing Vite application.
 
 type ComposerAttachment = { id: string; file: File; src: string };
-const imageSizes = ['auto', '1024x1024', '1536x1024', '1024x1536', '2048x2048', '2048x1152', '3840x2160', '2160x3840'] as const;
+const imageSizes = ['auto', '1024x1024', '1536x1024', '1024x1536'] as const;
 const imageQualities = ['auto', 'low', 'medium', 'high'] as const;
 export type ImageSize = typeof imageSizes[number];
 export type ImageQuality = typeof imageQualities[number];
@@ -74,10 +74,6 @@ export function AssistantComposer({
   useEffect(() => {
     if (!models.some((item) => item.id === model)) setModel(models[0]?.id ?? '');
   }, [model, models]);
-
-  useEffect(() => {
-    if (model !== 'gpt-image-2' && (imageSize.startsWith('2') || imageSize.startsWith('3'))) onImageSizeChange('auto');
-  }, [imageSize, model, onImageSizeChange]);
 
   const addFiles = (files: ArrayLike<File> | null) => {
     if (!files?.length) return;
@@ -145,8 +141,8 @@ export function AssistantComposer({
       <div className="aui-composer-action-wrapper">
         <div className="aui-composer-action-start">
           <button className="aui-composer-add-attachment" type="button" onClick={() => inputRef.current?.click()} aria-label={addAttachmentLabel} title={addAttachmentLabel}><Plus className="aui-attachment-add-icon" /></button>
-          <CustomSelect className="aui-model-picker" value={model} disabled={modelsLoading || !models.length || disabled} ariaLabel={modelLabel} placeholder={modelsLoading ? loadingLabel : modelLabel} icon={modelsLoading ? <SolnSpin label={loadingLabel} /> : modelIcon} menuPlacement="top" minMenuWidth={220} options={models.map((item) => ({ value: item.id, label: item.label, description: item.id }))} onChange={setModel} />
-          <CustomSelect className="aui-image-option-picker" value={imageSize} disabled={disabled} ariaLabel={sizeLabel} menuPlacement="top" options={sizeOptions.filter(({ value }) => model === 'gpt-image-2' || (!value.startsWith('2') && !value.startsWith('3')))} onChange={(size) => onImageSizeChange(size as ImageSize)} />
+          <CustomSelect className="aui-model-picker" value={model} disabled={modelsLoading || !models.length || disabled} ariaLabel={modelLabel} placeholder={modelsLoading ? loadingLabel : modelLabel} icon={modelsLoading ? <SolnSpin label={loadingLabel} /> : modelIcon} menuPlacement="top" minMenuWidth={220} options={models.map((item) => ({ value: item.id, label: item.label }))} onChange={setModel} />
+          <CustomSelect className="aui-image-option-picker" value={imageSize} disabled={disabled} ariaLabel={sizeLabel} menuPlacement="top" options={sizeOptions} onChange={(size) => onImageSizeChange(size as ImageSize)} />
           <CustomSelect className="aui-image-option-picker" value={imageQuality} disabled={disabled} ariaLabel={qualityLabel} menuPlacement="top" options={qualityOptions} onChange={(quality) => onImageQualityChange(quality as ImageQuality)} />
         </div>
         <button className="aui-composer-send" type="submit" disabled={disabled || !model || (!text.trim() && !attachments.length)} aria-label={sendLabel} title={sendLabel}><ArrowUp className="aui-composer-send-icon" /></button>

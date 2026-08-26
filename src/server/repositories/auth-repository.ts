@@ -225,6 +225,13 @@ export class AuthRepository {
     return this.list(tenantId);
   }
 
+  moveToEnd(tenantId: string, id: string): void {
+    const ids = this.list(tenantId).map((file) => file.id);
+    const index = ids.indexOf(id);
+    if (index < 0 || index === ids.length - 1) return;
+    this.reorder(tenantId, [...ids.slice(0, index), ...ids.slice(index + 1), id]);
+  }
+
   saveInspection(tenantId: string, authFileId: string, inspection: Inspection): void {
     this.database
       .prepare(`

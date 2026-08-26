@@ -9,6 +9,7 @@ export type CustomSelectOption = {
   value: string;
   label: string;
   description?: string;
+  icon?: ReactNode;
   disabled?: boolean;
 };
 
@@ -167,6 +168,7 @@ export function CustomSelect({
         onPointerMove={() => setActiveIndex(index)}
         onClick={() => choose(option)}
       >
+        {option.icon ? <span className="custom-select-option-icon">{option.icon}</span> : null}
         <span><strong>{option.label}</strong>{option.description ? <small>{option.description}</small> : null}</span>
         {option.value === value ? <Check aria-hidden="true" /> : null}
       </button>)}

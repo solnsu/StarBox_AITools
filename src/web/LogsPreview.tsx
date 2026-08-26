@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  CalendarDays, CheckCircle2, ChevronDown, ChevronFirst, ChevronLast, ChevronLeft, ChevronRight, CircleDollarSign,
-  Database, RefreshCw, Search, X, XCircle,
+  CalendarDays, ChevronDown, ChevronFirst, ChevronLast, ChevronLeft, ChevronRight, CircleDollarSign,
+  Database, Gauge, JapaneseYen, RefreshCw, Search, X,
 } from 'lucide-react';
 import { ApiError, gatewayApi } from './api';
 import { errorKey, useI18n } from './i18n';
@@ -20,8 +20,9 @@ const emptySummary: RequestLogSummary = {
   totalTokens: 0,
   inputTokens: 0,
   outputTokens: 0,
+  cacheEligibleInputTokens: 0,
   cachedTokens: 0,
-  estimatedCostUsd: 0,
+  estimatedCosts: [],
   averageLatencyMs: null,
   lastRequestAt: null,
 };
@@ -38,6 +39,7 @@ export function LogsPreview({ notify }: { notify: Notify }) {
   const [status, setStatus] = useState<LogStatus>('all');
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(10);
+  const [exporting, setExporting] = useState(false);
   const [selectedLog, setSelectedLog] = useState<RequestLog | null>(null);
 
   useEffect(() => {
@@ -70,13 +72,40 @@ export function LogsPreview({ notify }: { notify: Notify }) {
   const firstRow = logs.length ? safePage * pageSize + 1 : 0;
   const lastRow = logs.length ? safePage * pageSize + logs.length : 0;
 
+  const exportLogs = async () => {
+    setExporting(true);
+    try {
+      const exportedLogs: RequestLog[] = [];
+      let offset = 0;
+      while (true) {
+        const result = await gatewayApi.logs({ query: settledQuery, status, startAt, endAt, limit: 200, offset });
+        exportedLogs.push(...result.logs);
+        if (!result.logs.length || exportedLogs.length >= result.summary.totalRequests) break;
+        offset += result.logs.length;
+      }
+      downloadLogsCsv(exportedLogs, [
+        t('exportHeaderRequestTime'), t('exportHeaderModel'), t('exportHeaderAccount'),
+        t('exportHeaderMethod'), t('exportHeaderEndpoint'), t('exportHeaderInputTokens'),
+        t('exportHeaderOutputTokens'), t('exportHeaderCachedTokens'), t('exportHeaderReasoningTokens'),
+        t('exportHeaderEstimatedCost'), t('exportHeaderCurrency'), t('exportHeaderTtft'),
+        t('exportHeaderLatency'), t('exportHeaderStatus'), t('exportHeaderStatusCode'),
+        t('exportHeaderRequestId'),
+      ]);
+      notify(t('logsExported'));
+    } catch (error) {
+      notify(t(errorKey(error instanceof ApiError ? error.code : '')), 'error');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return <main className="logs-canvas">
     <section className="logs-shell">
       <section className="logs-summary" aria-label={t('logSummary')}>
         <SummaryItem icon={<Database />} label={t('totalRequests')} value={formatNumber(summary.totalRequests, locale)} onValueClick={notify} />
-        <SummaryItem icon={<CheckCircle2 />} label={t('successRequests')} value={formatNumber(summary.successCount, locale)} tone="success" onValueClick={notify} />
-        <SummaryItem icon={<XCircle />} label={t('failedRequests')} value={formatNumber(summary.failureCount, locale)} tone="failed" onValueClick={notify} />
-        <SummaryItem icon={<CircleDollarSign />} label={t('estimatedCost')} value={formatCurrency(summary.estimatedCostUsd ?? 0)} tone="cost" onValueClick={notify} />
+        <SummaryItem icon={<JapaneseYen />} label={t('cnyCost')} value={formatCurrencyCost(summary.estimatedCosts, 'CNY')} tone="cny-cost" onValueClick={notify} />
+        <SummaryItem icon={<CircleDollarSign />} label={t('usdCost')} value={formatCurrencyCost(summary.estimatedCosts, 'USD')} tone="usd-cost" onValueClick={notify} />
+        <SummaryItem icon={<Gauge />} label={t('cacheRate')} value={formatCacheRate(summary.cachedTokens, summary.cacheEligibleInputTokens, locale)} tone="cache" onValueClick={notify} />
       </section>
 
       <section className="logs-table-card">
@@ -85,23 +114,29 @@ export function LogsPreview({ notify }: { notify: Notify }) {
             <label className="logs-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('logSearchPlaceholder')} /></label>
             <DateRangePicker startDate={startDate} endDate={endDate} onChange={(start, end) => { setStartDate(start); setEndDate(end); }} />
           </div>
-          <div className="logs-toolbar-actions"><div className="logs-filters" role="group" aria-label={t('status')}>
-            {(['all', 'success', 'failed'] as const).map((item) => <button key={item} className={status === item ? 'active' : ''} onClick={() => setStatus(item)}>{item === 'all' ? t('allRequests') : t(item)}</button>)}
-          </div><button className="logs-refresh" onClick={() => void load()} disabled={loading} aria-label={t('refreshLogs')} title={t('refreshLogs')}><RefreshCw size={17} /></button></div>
+          <div className="logs-toolbar-actions">
+            <button className="logs-export" type="button" onClick={() => void exportLogs()} disabled={exporting || summary.totalRequests === 0}>
+              {exporting ? t('exportingLogs') : t('exportLogs')}
+            </button>
+            <div className="logs-filters" role="group" aria-label={t('status')}>
+              {(['all', 'success', 'failed'] as const).map((item) => <button key={item} className={status === item ? 'active' : ''} onClick={() => setStatus(item)}>{item === 'all' ? t('allRequests') : t(item)}</button>)}
+            </div>
+            <button className="logs-refresh" onClick={() => void load()} disabled={loading} aria-label={t('refreshLogs')} title={t('refreshLogs')}><RefreshCw size={17} /></button>
+          </div>
         </div>
 
         <div className="logs-table-scroll cp-sidebar-scrollbar">
           {loading ? <LoadingState /> : logs.length ? <table className="logs-table">
-            <thead><tr><th>{t('request')}</th><th>{t('model')}</th><th>{t('account')}</th><th>{t('requestPath')}</th><th>{t('tokenUsage')}</th><th>{t('estimatedCost')}</th><th>{t('latency')}</th><th>{t('status')}</th></tr></thead>
+            <thead><tr><th>{t('requestTime')}</th><th>{t('model')}</th><th>{t('account')}</th><th>{t('requestPath')}</th><th>{t('tokenUsage')}</th><th>{t('estimatedCost')}</th><th>{t('latency')}</th><th>{t('status')}</th></tr></thead>
             <tbody>{logs.map((log) => <tr key={log.id}>
               <td><strong>{formatDateTime(log.timestampMs, locale)}</strong></td>
               <td><strong>{log.model ?? '—'}</strong></td>
               <td><strong>{log.accountSnapshot ?? '—'}</strong></td>
               <td><span className="logs-endpoint"><b>{log.method ?? 'API'}</b>{log.path ?? log.endpoint ?? '—'}</span></td>
               <td><TokenSummary log={log} locale={locale} /></td>
-              <td><strong className="logs-cost">{formatCurrency(log.estimatedCostUsd ?? 0)}</strong></td>
+              <td><strong className="logs-cost">{formatCost(log.estimatedCost)}</strong></td>
               <td><div className="logs-latency">
-                <span><small>{t('firstByte')}</small><strong>{formatDuration(log.ttftMs)}</strong></span>
+                {!isImageRequest(log) ? <span><small>{t('firstByte')}</small><strong>{formatDuration(log.ttftMs)}</strong></span> : null}
                 <span><small>{t('elapsedShort')}</small><strong>{formatDuration(log.latencyMs)}</strong></span>
               </div></td>
               <td><StatusBadge log={log} onClick={log.failed ? () => setSelectedLog(log) : undefined} /></td>
@@ -111,6 +146,11 @@ export function LogsPreview({ notify }: { notify: Notify }) {
 
         <footer className="logs-pagination">
           <span>{t('showingRows', { first: firstRow, last: lastRow, total: summary.totalRequests })}</span>
+          <div className="logs-pagination-statuses">
+            <span className="success"><i />{t('successRequests')} {formatNumber(summary.successCount, locale)}</span>
+            <span className="failed"><i />{t('failedRequests')} {formatNumber(summary.failureCount, locale)}</span>
+            <span className="tokens"><i />{t('tokens')} {formatNumber(summary.totalTokens, locale)}</span>
+          </div>
           <div className="logs-page-size"><span>{t('rowsPerPage')}</span><CustomSelect className="logs-page-select" value={String(pageSize)} ariaLabel={t('rowsPerPage')} menuPlacement="top" minMenuWidth={76} options={[{ value: '10', label: '10' }, { value: '20', label: '20' }, { value: '50', label: '50' }]} onChange={(value) => setPageSize(Number(value))} /></div>
           <strong>{t('pageOf', { page: safePage + 1, total: pageCount })}</strong>
           <div className="logs-page-actions">
@@ -244,11 +284,12 @@ function LogStatusDialog({ log, onClose }: { log: RequestLog; onClose: () => voi
 
 function TokenSummary({ log, locale }: { log: RequestLog; locale: string }) {
   const { t } = useI18n();
+  const imageRequest = isImageRequest(log);
   return <div className="logs-token-summary">
     <span><small>{t('inputShort')}:</small><strong>{formatNumber(log.inputTokens, locale)}</strong></span>
     <span><small>{t('outputShort')}:</small><strong>{formatNumber(log.outputTokens, locale)}</strong></span>
-    <span><small>{t('cacheHit')}:</small><strong>{formatNumber(log.cachedTokens, locale)}</strong></span>
-    <span><small>{t('thinking')}:</small><strong>{formatNumber(log.reasoningTokens, locale)}</strong></span>
+    {!imageRequest ? <span><small>{t('cacheHit')}:</small><strong>{formatNumber(log.cachedTokens, locale)}</strong></span> : null}
+    {!imageRequest ? <span><small>{t('thinking')}:</small><strong>{formatNumber(log.reasoningTokens, locale)}</strong></span> : null}
   </div>;
 }
 
@@ -268,8 +309,52 @@ function formatDuration(value: number | null) {
   return value >= 1000 ? `${(value / 1000).toFixed(value >= 10_000 ? 1 : 2)} s` : `${value} ms`;
 }
 
-function formatCurrency(value: number) {
-  return `$${value.toFixed(6)}`;
+function isImageRequest(log: RequestLog) {
+  return (log.path ?? '').startsWith('/v1/images/')
+    || (log.endpoint ?? '').includes('/v1/images/');
+}
+
+function downloadLogsCsv(logs: RequestLog[], headers: string[]) {
+  const rows = logs.map((log) => {
+    const imageRequest = isImageRequest(log);
+    return [
+      new Date(log.timestampMs).toISOString(), log.model, log.accountSnapshot, log.method,
+      log.path ?? log.endpoint, log.inputTokens, log.outputTokens,
+      imageRequest ? null : log.cachedTokens, imageRequest ? null : log.reasoningTokens,
+      log.estimatedCost?.amount ?? null, log.estimatedCost?.currency ?? null,
+      imageRequest ? null : log.ttftMs, log.latencyMs, log.failed ? 'failed' : 'success',
+      log.failStatusCode, log.requestId,
+    ];
+  });
+  const csv = [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n');
+  const objectUrl = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = `request-logs-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.csv`;
+  link.click();
+  URL.revokeObjectURL(objectUrl);
+}
+
+function csvCell(value: string | number | null) {
+  const text = value === null ? '' : String(value);
+  const safe = /^[=+\-@]/.test(text) ? `'${text}` : text;
+  return `"${safe.replaceAll('"', '""')}"`;
+}
+
+function formatCost(cost: RequestLog['estimatedCost']) {
+  if (!cost) return '—';
+  return `${cost.currency === 'CNY' ? '¥' : '$'}${cost.amount.toFixed(6)}`;
+}
+
+function formatCurrencyCost(costs: RequestLogSummary['estimatedCosts'], currency: 'CNY' | 'USD') {
+  return formatCost(costs.find((cost) => cost.currency === currency) ?? null);
+}
+
+function formatCacheRate(cachedTokens: number, inputTokens: number, locale: string) {
+  if (inputTokens <= 0) return '—';
+  return new Intl.NumberFormat(locale === 'zh' ? 'zh-CN' : 'en', {
+    style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1,
+  }).format(Math.min(1, Math.max(0, cachedTokens / inputTokens)));
 }
 
 function dateBoundary(value: string, nextDay = false) {

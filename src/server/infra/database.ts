@@ -44,6 +44,31 @@ export const createDatabase = (dataDir: string) => {
     CREATE INDEX IF NOT EXISTS inspections_latest_idx
       ON inspections (tenant_id, auth_file_id, inspected_at DESC);
 
+    CREATE TABLE IF NOT EXISTS deepseek_api_keys (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      base_url TEXT NOT NULL,
+      masked_key TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      disabled INTEGER NOT NULL DEFAULT 0 CHECK (disabled IN (0, 1)),
+      ciphertext TEXT NOT NULL,
+      iv TEXT NOT NULL,
+      tag TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE (tenant_id, name)
+    );
+
+    CREATE INDEX IF NOT EXISTS deepseek_api_keys_order_idx
+      ON deepseek_api_keys (tenant_id, sort_order ASC, created_at ASC);
+
+    CREATE TABLE IF NOT EXISTS deepseek_key_billing (
+      key_id TEXT PRIMARY KEY REFERENCES deepseek_api_keys(id) ON DELETE CASCADE,
+      currency TEXT NOT NULL CHECK (currency IN ('USD', 'CNY')),
+      detected_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS gateway_settings (
       tenant_id TEXT PRIMARY KEY,
       base_url TEXT NOT NULL,
@@ -92,6 +117,14 @@ export const createDatabase = (dataDir: string) => {
       ON request_logs (tenant_id, timestamp_ms DESC);
     CREATE INDEX IF NOT EXISTS request_logs_status_idx
       ON request_logs (tenant_id, failed, timestamp_ms DESC);
+
+    CREATE TABLE IF NOT EXISTS request_log_costs (
+      request_log_id TEXT PRIMARY KEY REFERENCES request_logs(id) ON DELETE CASCADE,
+      amount REAL NOT NULL CHECK (amount >= 0),
+      currency TEXT NOT NULL CHECK (currency IN ('USD', 'CNY')),
+      pricing_version TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
 
     CREATE TABLE IF NOT EXISTS creation_sessions (
       id TEXT PRIMARY KEY,
