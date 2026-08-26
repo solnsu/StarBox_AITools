@@ -24,9 +24,21 @@ StarBox 是一款本地运行的 ChatGPT/Codex 账号与 DeepSeek API Key 管理
 
 ## 界面预览
 
-![StarBox 界面预览 1](./starbox-preview-1.png)
-![StarBox 界面预览 2](./starbox-preview-2.png)
-![StarBox 界面预览 3](./starbox-preview-3.png)
+### ChatGPT 账号
+
+![ChatGPT 账号概览](./docs/images/chatgpt-account.png)
+
+### DeepSeek 账号
+
+![DeepSeek 账号概览](./docs/images/deepseek-account.png)
+
+### 请求日志
+
+![请求日志](./docs/images/request-logs.png)
+
+### 图片创作
+
+![图片创作工作区](./docs/images/image-creation.png)
 
 ## 下载
 

@@ -1,7 +1,7 @@
 {
   "name": "starbox",
   "productName": "StarBox",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local ChatGPT, Codex, and DeepSeek credential and gateway management desktop application",
   "author": "solnsu <soln0708@163.com>",
   "homepage": "https://github.com/solnsu/StarBox_AITools",

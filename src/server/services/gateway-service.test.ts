@@ -385,7 +385,7 @@ describe('GatewayService', () => {
     expect(await context.response.text()).toContain('rotated-response');
   });
 
-  it('round-robins healthy ChatGPT accounts', async () => {
+  it('keeps using the first healthy ChatGPT account', async () => {
     auth.import('first.json', {
       type: 'codex', account_id: 'account-first', email: 'first@example.com', access_token: 'first-token',
     });
@@ -409,12 +409,12 @@ describe('GatewayService', () => {
     );
 
     expect([first.credential.accountId, second.credential.accountId]).toEqual([
-      'account-first', 'account-second',
+      'account-first', 'account-first',
     ]);
-    expect(accounts).toEqual(['account-first', 'account-second']);
+    expect(accounts).toEqual(['account-first', 'account-first']);
   });
 
-  it('round-robins managed creation requests independently of the displayed account', async () => {
+  it('keeps managed creation requests on the first healthy account', async () => {
     auth.import('first.json', {
       type: 'codex', account_id: 'account-first', email: 'first@example.com', access_token: 'first-token',
     });
@@ -437,9 +437,9 @@ describe('GatewayService', () => {
     });
 
     expect([first.credential.accountId, second.credential.accountId]).toEqual([
-      'account-first', 'account-second',
+      'account-first', 'account-first',
     ]);
-    expect(accounts).toEqual(['account-first', 'account-second']);
+    expect(accounts).toEqual(['account-first', 'account-first']);
   });
 
   it('fails over image generation after quota exhaustion and skips the cooled account', async () => {

@@ -24,9 +24,21 @@ Use StarBox to manage credentials, inspect quotas and balances, browse available
 
 ## Interface Preview
 
-![StarBox interface preview 1](./starbox-preview-1.png)
-![StarBox interface preview 2](./starbox-preview-2.png)
-![StarBox interface preview 3](./starbox-preview-3.png)
+### ChatGPT account
+
+![ChatGPT account overview](./docs/images/chatgpt-account.png)
+
+### DeepSeek account
+
+![DeepSeek account overview](./docs/images/deepseek-account.png)
+
+### Request logs
+
+![Request logs](./docs/images/request-logs.png)
+
+### Image creation
+
+![Image creation workspace](./docs/images/image-creation.png)
 
 ## Download
 
