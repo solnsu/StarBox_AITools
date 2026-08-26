@@ -8,7 +8,7 @@ StarBox 是一款本地运行的 ChatGPT/Codex 账号与 DeepSeek API Key 管理
 
 ## 操作手册
 
-[查看 StarBox 操作手册](https://rcnavw2rdmby.feishu.cn/wiki/MkwFwO2bjiJQF6kJ9tZcaNJanud?from=from_copylink)
+[查看 StarBox 使用手册](https://rcnavw2rdmby.feishu.cn/wiki/KMmHwtGu7iP28ek16E7cX0HgnEq)
 
 ## 功能
 

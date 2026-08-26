@@ -8,7 +8,7 @@ Use StarBox to manage credentials, inspect quotas and balances, browse available
 
 ## User Guide
 
-[View the StarBox User Guide](https://rcnavw2rdmby.feishu.cn/wiki/MkwFwO2bjiJQF6kJ9tZcaNJanud?from=from_copylink)
+[View the StarBox User Guide](https://rcnavw2rdmby.feishu.cn/wiki/KMmHwtGu7iP28ek16E7cX0HgnEq)
 
 ## Features
 
