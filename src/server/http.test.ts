@@ -60,6 +60,7 @@ describe('local model API HTTP routes', () => {
   let dataDir: string;
   let database: AppDatabase;
   let server: Server;
+  let creation: CreationService;
   let desktopIntegration: DesktopIntegration;
   let rateLimitRead: ReturnType<typeof vi.fn>;
   let rateLimitConsume: ReturnType<typeof vi.fn>;
@@ -78,7 +79,7 @@ describe('local model API HTTP routes', () => {
     });
     const gatewayRepository = new GatewayRepository(database, pricing);
     const gateway = new GatewayService(gatewayRepository, vault, auth, pricing, 'test');
-    const creation = new CreationService(new CreationRepository(database), path.join(dataDir, 'generated-images'), 'test');
+    creation = new CreationService(new CreationRepository(database), path.join(dataDir, 'generated-images'), 'test');
     const deepSeekKeys = new DeepSeekKeyService(
       new DeepSeekKeyRepository(database), vault, 'test',
       async () => new Response(JSON.stringify({
@@ -568,6 +569,20 @@ describe('local model API HTTP routes', () => {
     expect(logs.logs[0]).toMatchObject({ requestId: 'creation-1' });
     expect(logs.logs[0]!.responseContent).toContain('[base64 omitted:');
     expect(logs.logs[0]!.responseContent).not.toContain(onePixelPng);
+  });
+
+  it('limits image creation to three concurrent tasks and releases completed slots', () => {
+    const releases = [
+      creation.acquireGenerationSlot(),
+      creation.acquireGenerationSlot(),
+      creation.acquireGenerationSlot(),
+    ];
+
+    expect(() => creation.acquireGenerationSlot()).toThrow('CREATION_CONCURRENCY_LIMIT');
+    releases[0]!();
+    const releaseReplacement = creation.acquireGenerationSlot();
+    expect(() => releaseReplacement()).not.toThrow();
+    releases.slice(1).forEach((release) => release());
   });
 
   it('reads and consumes Codex rate-limit reset credits for a selected auth file', async () => {

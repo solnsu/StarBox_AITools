@@ -370,36 +370,41 @@ export const createHttpApp = (
   });
   app.post('/api/creation/generate', async (request, response) => {
     const input = creationGenerateSchema.parse(request.body);
-    await creationService.prepareGeneration(input.session, input.userMessage);
-    const context = await gatewayService.proxyManagedImageGeneration({
-      model: input.model,
-      prompt: input.prompt,
-      size: input.size,
-      quality: input.quality,
-      ...(input.inputImages?.length ? { input_images: input.inputImages } : {}),
-    }, input.authFileId);
-    const status = context.response.status;
-    const captured = await context.response.text();
-    if (!context.response.ok) {
-      gatewayService.recordImage(context, captured, status);
-      response.status(status);
-      response.setHeader('X-Request-Id', context.requestId);
-      response.setHeader('Content-Type', context.response.headers.get('content-type') ?? 'application/json; charset=utf-8');
-      response.send(captured);
-      return;
-    }
-    let result;
+    const releaseGenerationSlot = creationService.acquireGenerationSlot();
     try {
-      result = await creationService.saveGeneration(input.sessionId, input.prompt, captured);
-    } catch (error) {
-      const failure = error instanceof ServiceError ? error : new ServiceError('CREATION_IMAGE_SAVE_FAILED', 500);
-      gatewayService.recordImage(context, captured, failure.status, failure.code);
-      throw error;
+      await creationService.prepareGeneration(input.session, input.userMessage);
+      const context = await gatewayService.proxyManagedImageGeneration({
+        model: input.model,
+        prompt: input.prompt,
+        size: input.size,
+        quality: input.quality,
+        ...(input.inputImages?.length ? { input_images: input.inputImages } : {}),
+      }, input.authFileId);
+      const status = context.response.status;
+      const captured = await context.response.text();
+      if (!context.response.ok) {
+        gatewayService.recordImage(context, captured, status);
+        response.status(status);
+        response.setHeader('X-Request-Id', context.requestId);
+        response.setHeader('Content-Type', context.response.headers.get('content-type') ?? 'application/json; charset=utf-8');
+        response.send(captured);
+        return;
+      }
+      let result;
+      try {
+        result = await creationService.saveGeneration(input.sessionId, input.prompt, captured);
+      } catch (error) {
+        const failure = error instanceof ServiceError ? error : new ServiceError('CREATION_IMAGE_SAVE_FAILED', 500);
+        gatewayService.recordImage(context, captured, failure.status, failure.code);
+        throw error;
+      }
+      gatewayService.recordImage(context, captured, status);
+      response.status(200);
+      response.setHeader('X-Request-Id', context.requestId);
+      response.json(result);
+    } finally {
+      releaseGenerationSlot();
     }
-    gatewayService.recordImage(context, captured, status);
-    response.status(200);
-    response.setHeader('X-Request-Id', context.requestId);
-    response.json(result);
   });
   app.get('/api/auth-files', (_request, response) => response.json({ files: service.list() }));
   app.get('/api/auth-files/:id/rate-limit-reset', async (request, response) => {

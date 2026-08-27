@@ -15,6 +15,7 @@ import { ServiceError } from './auth-service.js';
 
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 const MAX_INPUT_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_CONCURRENT_GENERATIONS = 3;
 const PNG_SIGNATURE = '89504e470d0a1a0a';
 const INPUT_IMAGE_PATTERN = /^data:(image\/(?:png|jpeg|jpg|webp));base64,([A-Za-z0-9+/=]+)$/;
 
@@ -26,11 +27,26 @@ export type CreationImage = Omit<StoredCreationImage, 'fileName' | 'mimeType'> &
 export type CreationWorkspace = { sessions: CreationSession[]; images: CreationImage[] };
 
 export class CreationService {
+  private activeGenerations = 0;
+
   constructor(
     private readonly repository: CreationRepository,
     private readonly imagesDirectory: string,
     private readonly tenantId: string,
   ) {}
+
+  acquireGenerationSlot(): () => void {
+    if (this.activeGenerations >= MAX_CONCURRENT_GENERATIONS) {
+      throw new ServiceError('CREATION_CONCURRENCY_LIMIT', 429);
+    }
+    this.activeGenerations += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.activeGenerations -= 1;
+    };
+  }
 
   async workspace(): Promise<CreationWorkspace> {
     const images = this.repository.listImages(this.tenantId);
