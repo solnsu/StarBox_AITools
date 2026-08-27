@@ -188,6 +188,7 @@ export const creationApi = {
     userMessage?: { id: string; role: 'user'; text: string; createdAt: number; attachments?: CreationInputAttachmentData[] };
     model: string;
     prompt: string;
+    responseCreatedAt: number;
     size: string;
     quality: string;
     inputImages?: string[];

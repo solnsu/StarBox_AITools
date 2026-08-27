@@ -141,7 +141,9 @@ export class CreationRepository {
         id, tenant_id, session_id, role, text, kind, attachments_json, retry_draft_json, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    const touch = this.database.prepare('UPDATE creation_sessions SET updated_at = ? WHERE tenant_id = ? AND id = ?');
+    const touch = this.database.prepare(`
+      UPDATE creation_sessions SET updated_at = MAX(updated_at, ?) WHERE tenant_id = ? AND id = ?
+    `);
     this.database.transaction(() => {
       insert.run(
         message.id, tenantId, sessionId, message.role, message.text, message.kind ?? null,

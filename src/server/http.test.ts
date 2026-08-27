@@ -512,6 +512,7 @@ describe('local model API HTTP routes', () => {
       },
       model: 'gpt-image-2',
       prompt: 'A tiny robot',
+      responseCreatedAt: createdAt + 1,
     });
     expect(generated.status).toBe(200);
     const result = JSON.parse(generated.body) as {
@@ -520,6 +521,7 @@ describe('local model API HTTP routes', () => {
     };
     expect(result.data).toHaveLength(2);
     expect(result.message).toMatchObject({ role: 'assistant', attachments: [{ url: result.data[0]!.url }, { url: result.data[1]!.url }] });
+    expect(result.message).toMatchObject({ createdAt: createdAt + 1 });
 
     const image = await send(server, 'GET', result.data[0]!.url);
     expect(image.status).toBe(200);
@@ -583,6 +585,31 @@ describe('local model API HTTP routes', () => {
     const releaseReplacement = creation.acquireGenerationSlot();
     expect(() => releaseReplacement()).not.toThrow();
     releases.slice(1).forEach((release) => release());
+  });
+
+  it('keeps prompt and image pairs in submission order when generations finish out of order', async () => {
+    const sessionId = randomUUID();
+    const firstCreatedAt = Date.now();
+    const secondCreatedAt = firstCreatedAt + 2;
+    const session = { id: sessionId, title: 'Concurrent images', createdAt: firstCreatedAt };
+    await creation.prepareGeneration(session, {
+      id: randomUUID(), role: 'user', text: 'First prompt', createdAt: firstCreatedAt,
+    });
+    await creation.prepareGeneration(session, {
+      id: randomUUID(), role: 'user', text: 'Second prompt', createdAt: secondCreatedAt,
+    });
+    const captured = JSON.stringify({ data: [{ b64_json: onePixelPng }] });
+
+    await creation.saveGeneration(sessionId, 'Second prompt', captured, secondCreatedAt + 1);
+    await creation.saveGeneration(sessionId, 'First prompt', captured, firstCreatedAt + 1);
+
+    const restored = (await creation.workspace()).sessions.find((item) => item.id === sessionId)!;
+    expect(restored.messages.map((message) => [message.role, message.createdAt])).toEqual([
+      ['user', firstCreatedAt],
+      ['assistant', firstCreatedAt + 1],
+      ['user', secondCreatedAt],
+      ['assistant', secondCreatedAt + 1],
+    ]);
   });
 
   it('reads and consumes Codex rate-limit reset credits for a selected auth file', async () => {

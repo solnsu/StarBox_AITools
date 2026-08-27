@@ -54,6 +54,7 @@ const creationGenerateSchema = z.object({
   }).strict().optional(),
   model: z.string().min(1).max(120),
   prompt: z.string().min(1).max(32_000),
+  responseCreatedAt: z.number().int().positive(),
   size: z.enum(['auto', '1024x1024', '1536x1024', '1024x1536']).default('auto'),
   quality: z.enum(['auto', 'low', 'medium', 'high']).default('auto'),
   inputImages: z.array(z.string().regex(/^data:image\/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]+$/).max(15 * 1024 * 1024)).max(4).optional(),
@@ -392,7 +393,12 @@ export const createHttpApp = (
       }
       let result;
       try {
-        result = await creationService.saveGeneration(input.sessionId, input.prompt, captured);
+        result = await creationService.saveGeneration(
+          input.sessionId,
+          input.prompt,
+          captured,
+          input.responseCreatedAt,
+        );
       } catch (error) {
         const failure = error instanceof ServiceError ? error : new ServiceError('CREATION_IMAGE_SAVE_FAILED', 500);
         gatewayService.recordImage(context, captured, failure.status, failure.code);

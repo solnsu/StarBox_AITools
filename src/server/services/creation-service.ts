@@ -120,7 +120,12 @@ export class CreationService {
     this.repository.prepareGeneration(this.tenantId, session, normalized);
   }
 
-  async saveGeneration(sessionId: string, prompt: string, captured: string): Promise<{
+  async saveGeneration(
+    sessionId: string,
+    prompt: string,
+    captured: string,
+    responseCreatedAt: number,
+  ): Promise<{
     created: number;
     data: CreationImage[];
     message: CreationMessage;
@@ -142,7 +147,7 @@ export class CreationService {
         await writeFile(path.join(this.imagesDirectory, fileName), bytes, { flag: 'wx', mode: 0o600 });
         stored.push({
           id, sessionId, fileName, mimeType: 'image/png', prompt,
-          createdAt: Date.now() + stored.length,
+          createdAt: responseCreatedAt + stored.length,
         });
       }
       const attachments: CreationAttachment[] = stored.map((image) => ({
@@ -150,7 +155,7 @@ export class CreationService {
         url: `/api/generated-images/${image.id}`,
       }));
       const message: CreationMessage = {
-        id: randomUUID(), role: 'assistant', text: '', attachments, createdAt: Date.now(),
+        id: randomUUID(), role: 'assistant', text: '', attachments, createdAt: responseCreatedAt,
       };
       this.repository.addGeneration(this.tenantId, sessionId, stored, message);
       return {
