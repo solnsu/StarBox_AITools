@@ -488,6 +488,9 @@ describe('local model API HTTP routes', () => {
     const sessionId = randomUUID();
     const userMessageId = randomUUID();
     const createdAt = Date.now();
+    const authFiles = JSON.parse((await send(server, 'GET', '/api/auth-files')).body) as {
+      files: Array<{ id: string }>;
+    };
 
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
       created: 1,
@@ -496,6 +499,7 @@ describe('local model API HTTP routes', () => {
     }), { status: 200, headers: { 'content-type': 'application/json', 'x-request-id': 'creation-1' } })));
 
     const generated = await send(server, 'POST', '/api/creation/generate', {
+      authFileId: authFiles.files[0]!.id,
       sessionId,
       session: { id: sessionId, title: 'Robot', createdAt },
       userMessage: {

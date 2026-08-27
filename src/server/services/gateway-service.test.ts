@@ -282,7 +282,7 @@ describe('GatewayService', () => {
   });
 
   it('uses the image edits endpoint and multipart images when references are provided', async () => {
-    auth.import('image-account.json', {
+    const imageAccount = auth.import('image-account.json', {
       type: 'codex', account_id: 'account-1', email: 'user@example.com', access_token: 'access-value',
     });
     vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
@@ -304,7 +304,7 @@ describe('GatewayService', () => {
     const context = await gateway.proxyManagedImageGeneration({
       model: 'gpt-image-2', prompt: 'Make it blue', size: '1024x1024', quality: 'medium',
       input_images: ['data:image/png;base64,iVBORw0KGgo='],
-    });
+    }, imageAccount.id);
     const payload = await context.response.text();
     gateway.recordImage(context, payload, context.response.status);
     expect(gateway.dashboard({}).logs[0]).toMatchObject({
@@ -414,11 +414,11 @@ describe('GatewayService', () => {
     expect(accounts).toEqual(['account-first', 'account-first']);
   });
 
-  it('keeps managed creation requests on the first healthy account', async () => {
+  it('keeps managed creation requests on the explicitly selected account', async () => {
     auth.import('first.json', {
       type: 'codex', account_id: 'account-first', email: 'first@example.com', access_token: 'first-token',
     });
-    auth.import('second.json', {
+    const selected = auth.import('second.json', {
       type: 'codex', account_id: 'account-second', email: 'second@example.com', access_token: 'second-token',
     });
     const accounts: string[] = [];
@@ -431,15 +431,37 @@ describe('GatewayService', () => {
 
     const first = await gateway.proxyManagedImageGeneration({
       model: 'gpt-image-2', prompt: 'first image', size: '1024x1024',
-    });
+    }, selected.id);
     const second = await gateway.proxyManagedImageGeneration({
       model: 'gpt-image-2', prompt: 'second image', size: '1024x1024',
-    });
+    }, selected.id);
 
     expect([first.credential.accountId, second.credential.accountId]).toEqual([
-      'account-first', 'account-first',
+      'account-second', 'account-second',
     ]);
-    expect(accounts).toEqual(['account-first', 'account-first']);
+    expect(accounts).toEqual(['account-second', 'account-second']);
+  });
+
+  it('does not fail over a managed creation request to another account', async () => {
+    const selected = auth.import('selected.json', {
+      type: 'codex', account_id: 'account-selected', email: 'selected@example.com', access_token: 'selected-token',
+    });
+    auth.import('other.json', {
+      type: 'codex', account_id: 'account-other', email: 'other@example.com', access_token: 'other-token',
+    });
+    const accounts: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      accounts.push((init?.headers as Record<string, string>)['Chatgpt-Account-Id']!);
+      return new Response(JSON.stringify({ error: { message: 'usage limit reached' } }), { status: 429 });
+    }));
+
+    const context = await gateway.proxyManagedImageGeneration({
+      model: 'gpt-image-2', prompt: 'selected image', size: '1024x1024',
+    }, selected.id);
+
+    expect(context.response.status).toBe(429);
+    expect(context.credential.accountId).toBe('account-selected');
+    expect(accounts).toEqual(['account-selected']);
   });
 
   it('fails over image generation after quota exhaustion and skips the cooled account', async () => {

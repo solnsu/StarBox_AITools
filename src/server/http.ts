@@ -38,6 +38,7 @@ const codexApplySchema = z.object({
   provider: codexProviderSchema,
 }).strict();
 const creationGenerateSchema = z.object({
+  authFileId: z.string().uuid(),
   sessionId: z.string().uuid(),
   session: z.object({
     id: z.string().uuid(),
@@ -376,7 +377,7 @@ export const createHttpApp = (
       size: input.size,
       quality: input.quality,
       ...(input.inputImages?.length ? { input_images: input.inputImages } : {}),
-    });
+    }, input.authFileId);
     const status = context.response.status;
     const captured = await context.response.text();
     if (!context.response.ok) {

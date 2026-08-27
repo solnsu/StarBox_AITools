@@ -417,8 +417,8 @@ function CreationView({ selectedAuthFileId, onSelectAuthFile, notify }: {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const pinnedToBottomRef = useRef(true);
   const activeSession = sessions.find((session) => session.id === activeSessionId) ?? sessions[0]!;
-  const selectedAuthFile = files.find((file) => file.id === selectedAuthFileId) ?? files[0] ?? null;
-  const hasCodexCredential = files.some((file) => !file.disabled);
+  const activeAuthFiles = useMemo(() => files.filter((file) => !file.disabled), [files]);
+  const selectedAuthFile = activeAuthFiles.find((file) => file.id === selectedAuthFileId) ?? activeAuthFiles[0] ?? null;
   const displayedAccount = selectedAuthFile?.email ?? selectedAuthFile?.fileName ?? t('noAccountGreeting');
   const availableImageUrls = useMemo(() => new Set(createdImages.map((image) => image.url)), [createdImages]);
   const rightItems = useMemo(() => createdImages.length
@@ -525,10 +525,10 @@ function CreationView({ selectedAuthFileId, onSelectAuthFile, notify }: {
     return () => window.removeEventListener('focus', syncImages);
   }, [notify, t]);
   useEffect(() => {
-    if (!hasCodexCredential) { setImageModels([]); setModelsLoading(false); return; }
+    if (!selectedAuthFile) { setImageModels([]); setModelsLoading(false); return; }
     let active = true;
     setModelsLoading(true);
-    modelsApi.list().then((result) => {
+    modelsApi.list(selectedAuthFile.id).then((result) => {
       if (active) setImageModels(result.models
         .filter((model) => model.id.startsWith('gpt-image-'))
         .map((model) => ({ id: model.id, label: model.displayName }))
@@ -537,7 +537,7 @@ function CreationView({ selectedAuthFileId, onSelectAuthFile, notify }: {
       if (active) { setImageModels([]); notify(apiError(error, t), 'error'); }
     }).finally(() => { if (active) setModelsLoading(false); });
     return () => { active = false; };
-  }, [hasCodexCredential, notify, t]);
+  }, [selectedAuthFile?.id, notify, t]);
   const newSession = async () => {
     if (creatingSession) return;
     const session = createSession();
@@ -611,7 +611,7 @@ function CreationView({ selectedAuthFileId, onSelectAuthFile, notify }: {
     persistMessage(sessionId, message);
   };
   const runGeneration = async (sessionId: string, draft: CreationDraft, generationContext?: CreationGenerationContext) => {
-    if (!hasCodexCredential) {
+    if (!selectedAuthFile) {
       if (generationContext) persistMessage(sessionId, generationContext.userMessage);
       appendToSession(sessionId, { role: 'assistant', text: t('errorNoCredential'), kind: 'error', retryDraft: draft });
       return;
@@ -624,6 +624,7 @@ function CreationView({ selectedAuthFileId, onSelectAuthFile, notify }: {
       });
       if (!session) throw new ApiError('CREATION_SESSION_NOT_FOUND');
       const result = await creationApi.generate({
+        authFileId: selectedAuthFile.id,
         sessionId,
         session,
         ...(generationContext ? { userMessage: {
@@ -732,7 +733,7 @@ function CreationView({ selectedAuthFileId, onSelectAuthFile, notify }: {
   };
   return <main className="creation-canvas">
     <section className="creation-card creation-chat-card">
-      <header className="creation-chat-header"><button className="creation-header-button" type="button" onClick={() => setHistoryOpen(true)} aria-label={t('creationOpenSessions')} title={t('creationOpenSessions')}><Menu size={21} /></button><div className="creation-account-display" ref={accountSelectorRef}><strong title={displayedAccount}>{displayedAccount}</strong>{files.length ? <div className="account-dropdown"><button className="account-dropdown-trigger" type="button" aria-label={t('switchAccount')} aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen((open) => !open)}><ChevronDown size={16} /></button><MotionPresence>{accountMenuOpen ? <div className="account-dropdown-menu cp-sidebar-scrollbar">{files.map((file) => <button className={file.id === selectedAuthFile?.id ? 'selected' : ''} type="button" key={file.id} onClick={() => { onSelectAuthFile(file.id); setAccountMenuOpen(false); }}><span>{file.email ?? file.fileName}</span></button>)}</div> : null}</MotionPresence></div> : null}</div><button className="creation-header-button" type="button" onClick={() => void openImagesDirectory()} aria-label={t('creationOpenFolder')} title={t('creationOpenFolder')}><FolderOpen size={20} /></button></header>
+      <header className="creation-chat-header"><button className="creation-header-button" type="button" onClick={() => setHistoryOpen(true)} aria-label={t('creationOpenSessions')} title={t('creationOpenSessions')}><Menu size={21} /></button><div className="creation-account-display" ref={accountSelectorRef}><strong title={displayedAccount}>{displayedAccount}</strong>{activeAuthFiles.length ? <div className="account-dropdown"><button className="account-dropdown-trigger" type="button" aria-label={t('switchAccount')} aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen((open) => !open)}><ChevronDown size={16} /></button><MotionPresence>{accountMenuOpen ? <div className="account-dropdown-menu cp-sidebar-scrollbar">{activeAuthFiles.map((file) => <button className={file.id === selectedAuthFile?.id ? 'selected' : ''} type="button" key={file.id} onClick={() => { onSelectAuthFile(file.id); setAccountMenuOpen(false); }}><span>{file.email ?? file.fileName}</span></button>)}</div> : null}</MotionPresence></div> : null}</div><button className="creation-header-button" type="button" onClick={() => void openImagesDirectory()} aria-label={t('creationOpenFolder')} title={t('creationOpenFolder')}><FolderOpen size={20} /></button></header>
       <div className="creation-chat-messages-wrap"><div ref={messagesRef} className="creation-chat-messages cp-sidebar-scrollbar">{workspaceLoading ? <div className="loading"><SolnSpin label={t('loading')} />{t('loading')}</div> : activeSession.messages.map((message) => <CreationMessageItem message={message} availableImageUrls={availableImageUrls} key={message.id} onRetry={(draft) => void runGeneration(activeSessionId, draft)} onSelectImage={selectCreatedImage} onCopy={copyCreationMessage} />)}{generating?.sessionId === activeSessionId && <CreationGeneratingPlaceholder label={t('creationGenerating')} />}</div>{showScrollToBottom && <button className="creation-scroll-to-bottom" type="button" onClick={scrollToBottom} aria-label={t('creationScrollToBottom')} title={t('creationScrollToBottom')}><ChevronDown size={18} /></button>}</div>
       <div className="creation-composer"><AssistantComposer key={activeSessionId} addAttachmentLabel={t('creationAttach')} disabled={workspaceLoading || Boolean(generating)} loadingLabel={t('loading')} models={imageModels} modelsLoading={modelsLoading} modelLabel={t('creationModelLabel')} modelIcon={<OpenAiMark />} sizeLabel={t('creationImageSize')} qualityLabel={t('creationImageQuality')} sizeOptions={[{ value: 'auto', label: `${t('creationImageSize')} ${t('creationSizeAuto')}` }, { value: '1024x1024', label: t('creationSizeSquare') }, { value: '1536x1024', label: t('creationSizeLandscape') }, { value: '1024x1536', label: t('creationSizePortrait') }]} qualityOptions={[{ value: 'auto', label: `${t('creationImageQuality')} ${t('creationQualityAuto')}` }, { value: 'low', label: t('creationQualityLow') }, { value: 'medium', label: t('creationQualityMedium') }, { value: 'high', label: t('creationQualityHigh') }]} imageSize={imageSize} imageQuality={imageQuality} onImageSizeChange={setImageSize} onImageQualityChange={setImageQuality} placeholder={t('creationChatPlaceholder')} removeAttachmentLabel={t('creationRemoveAttachment')} sendLabel={t('creationChatSend')} onInvalidAttachments={(reason) => notify(t(reason === 'limit' ? 'creationAttachmentLimit' : 'creationAttachmentInvalid'), 'error')} onSend={appendMessage} /></div>
       <MotionPresence>{historyOpen ? <div className="creation-history-layer"><button className="creation-history-backdrop" type="button" onClick={() => setHistoryOpen(false)} aria-label={t('close')} /><aside className="creation-history-panel"><header><h2>{t('creationSessionsTitle')}</h2><button type="button" onClick={() => setHistoryOpen(false)} aria-label={t('close')}><X size={19} /></button></header><button className="creation-new-session" type="button" onClick={() => void newSession()} disabled={creatingSession}><Plus size={17} />{creatingSession ? t('loading') : t('creationNewSession')}</button><div className="creation-session-list cp-sidebar-scrollbar">{sessions.map((session) => <div className={`creation-session-item${session.id === activeSessionId ? ' active' : ''}`} key={session.id}><button className="creation-session-select" type="button" title={session.title} onClick={() => { setActiveSessionId(session.id); setHistoryOpen(false); }}><MessageCircle size={16} /><span><strong>{session.title}</strong><small>{formatDate(session.createdAt, locale)}</small></span></button><button className="creation-session-delete" type="button" onClick={() => requestDeleteSession(session.id)} disabled={deletingSessionId === session.id || generating?.sessionId === session.id} aria-label={t('creationDeleteSession')} title={t('creationDeleteSession')}><Trash2 size={15} /></button></div>)}</div></aside></div> : null}</MotionPresence>

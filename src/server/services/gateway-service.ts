@@ -247,11 +247,15 @@ export class GatewayService {
     return this.executeImageGeneration(body, suppliedKey);
   }
 
-  proxyManagedImageGeneration(body: unknown): Promise<ProxyContext> {
-    return this.executeImageGeneration(body, 'managed-creation');
+  proxyManagedImageGeneration(body: unknown, authFileId: string): Promise<ProxyContext> {
+    return this.executeImageGeneration(body, 'managed-creation', authFileId);
   }
 
-  private async executeImageGeneration(body: unknown, suppliedKey: string): Promise<ProxyContext> {
+  private async executeImageGeneration(
+    body: unknown,
+    suppliedKey: string,
+    authFileId?: string,
+  ): Promise<ProxyContext> {
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       throw new ServiceError('INVALID_MODEL_REQUEST', 400);
     }
@@ -274,16 +278,30 @@ export class GatewayService {
     const upstreamBody = isEdit ? this.buildImageEditBody(input, model, size, quality) : JSON.stringify({ ...input, model, stream: false });
     const startedAt = Date.now();
     let routed: { response: Response; credential: RuntimeCredential };
+    let selectedCredential: RuntimeCredential | null = null;
     try {
-      routed = await this.credentialPool.execute(
-        (credential) => this.fetchImageUpstream(upstreamBody, credential, isEdit),
-      );
+      if (authFileId) {
+        selectedCredential = await this.authService.getRuntimeCredential(authFileId);
+        let response = await this.fetchImageUpstream(upstreamBody, selectedCredential, isEdit);
+        if (response.status === 401 || response.status === 403) {
+          await response.body?.cancel();
+          selectedCredential = await this.authService.getRuntimeCredential(authFileId, true);
+          response = await this.fetchImageUpstream(upstreamBody, selectedCredential, isEdit);
+        }
+        routed = { response, credential: selectedCredential };
+      } else {
+        routed = await this.credentialPool.execute(
+          (credential) => this.fetchImageUpstream(upstreamBody, credential, isEdit),
+        );
+      }
     } catch (error) {
-      const credential = (await this.authService.getRuntimeCredentials())[0]!;
+      const credential = selectedCredential ?? (authFileId ? null : (await this.authService.getRuntimeCredentials())[0]!);
       const failure = this.imageRequestFailure(error);
-      this.recordFailedImageAttempt({
-        startedAt, model, credential, suppliedKey, imagePath, ...failure,
-      });
+      if (credential) {
+        this.recordFailedImageAttempt({
+          startedAt, model, credential, suppliedKey, imagePath, ...failure,
+        });
+      }
       if (error instanceof ServiceError) throw error;
       throw new ServiceError('UPSTREAM_UNAVAILABLE', 502);
     }

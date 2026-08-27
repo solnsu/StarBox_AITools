@@ -182,6 +182,7 @@ export const creationApi = {
       method: 'POST', body: JSON.stringify(message),
     }),
   generate: (input: {
+    authFileId: string;
     sessionId: string;
     session: Pick<CreationSessionData, 'id' | 'title' | 'createdAt'>;
     userMessage?: { id: string; role: 'user'; text: string; createdAt: number; attachments?: CreationInputAttachmentData[] };

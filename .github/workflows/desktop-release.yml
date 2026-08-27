@@ -59,6 +59,7 @@ jobs:
           path: |
             release/*.exe
             release/*.exe.blockmap
+            release/*.zip
           if-no-files-found: error
 
   release:
