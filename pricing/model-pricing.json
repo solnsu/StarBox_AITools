@@ -1,6 +1,6 @@
 {
-  "version": "2026.08.26",
-  "publishedAt": "2026-08-26T00:00:00.000Z",
+  "version": "2026.09.07",
+  "publishedAt": "2026-09-07T00:00:00.000Z",
   "unit": "per_million_tokens",
   "providers": {
     "codex": {
@@ -8,7 +8,8 @@
       "source": "https://developers.openai.com/api/docs/pricing",
       "pricingMode": "fixed",
       "models": {
-        "gpt-5.6-sol": { "input": 5, "cachedInput": 0.5, "output": 30 },
+        "gpt-6-astra": { "input": 10, "cachedInput": 1, "output": 50 },
+        "gpt-5.6-sol": { "input": 4, "cachedInput": 0.4, "output": 20 },
         "gpt-5.6-terra": { "input": 2, "cachedInput": 0.2, "output": 12 },
         "gpt-5.6-luna": { "input": 0.2, "cachedInput": 0.02, "output": 1.2 },
         "gpt-5.5": { "input": 5, "cachedInput": 0.5, "output": 30 },

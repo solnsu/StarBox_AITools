@@ -55,6 +55,10 @@ describe('model pricing', () => {
       pricingMode: 'time_window', timezone: 'Asia/Shanghai',
       currencies: { CNY: {}, USD: {} },
     });
+    expect(estimateModelCost(maintained, {
+      provider: 'codex', model: 'gpt-6-astra', timestampMs: Date.now(),
+      billingCurrency: 'USD', inputTokens: 1_000_000, cachedTokens: 0, outputTokens: 1_000_000,
+    })).toEqual({ amount: 60, currency: 'USD' });
     expect(resolveMaintainedCost(maintained, 'deepseek-v4-pro', '2026-08-24T09:30:00+08:00'))
       .toEqual({ amount: 36, currency: 'CNY' });
   });

@@ -197,7 +197,7 @@ describe('GatewayService', () => {
     expect(peak?.estimatedCost).toEqual({ amount: 3, currency: 'CNY' });
     expect(offPeak?.estimatedCost).toEqual({ amount: 1.5, currency: 'CNY' });
     expect(dashboard.summary.estimatedCosts).toEqual(expect.arrayContaining([
-      { amount: 5.22, currency: 'USD' },
+      { amount: 4.22, currency: 'USD' },
       { amount: 4.5, currency: 'CNY' },
     ]));
   });
